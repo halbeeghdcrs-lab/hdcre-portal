@@ -1,1 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Halbeeg RE Daily Portal</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <img src="https://halbeeghdcrs-lab.github.io/HALBEEG-HDCRS/logo.png" alt="Halbeeg Logo" class="logo">
+      <h1>Daily Site Report</h1>
+    </header>
 
+    <form id="dailyForm">
+      <!-- Basic Info -->
+      <fieldset>
+        <legend>Basic Information</legend>
+        <label>Site Name <select id="siteSelect" required></select></label>
+        <label>Report Date <input type="date" id="reportDate" required></label>
+        <label>Weather Morning 
+          <select id="weatherAM">
+            <option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Dusty</option><option>Foggy</option><option>Other</option>
+          </select>
+        </label>
+        <label>Weather Afternoon 
+          <select id="weatherPM">
+            <option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Dusty</option><option>Foggy</option><option>Other</option>
+          </select>
+        </label>
+        <label>Resident Engineer <input type="text" id="reName" required></label>
+        <label>Contractor Activity Summary <textarea id="activitySummary" rows="3" required></textarea></label>
+      </fieldset>
+
+      <!-- Work Progress (dynamic) -->
+      <fieldset id="workProgressSection">
+        <legend>Work Progress</legend>
+        <div id="taskTableContainer"></div>
+      </fieldset>
+
+      <!-- Workforce -->
+      <fieldset>
+        <legend>Workforce Availability</legend>
+        <table id="workforceTable">
+          <thead><tr><th>Labor Type</th><th>Planned</th><th>Available</th><th>Comments</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </fieldset>
+
+      <!-- Equipment -->
+      <fieldset>
+        <legend>Equipment</legend>
+        <table id="equipmentTable">
+          <thead><tr><th>Eq ID</th><th>Type</th><th>Qty</th><th>Condition</th><th>Comments</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button type="button" id="addEquipmentRow">+ Add Equipment</button>
+      </fieldset>
+
+      <!-- Materials Delivered -->
+      <fieldset>
+        <legend>Materials Delivered Today</legend>
+        <table id="matDeliveredTable">
+          <thead><tr><th>Material ID</th><th>Description</th><th>Unit</th><th>Qty</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button type="button" id="addMatDeliveredRow">+ Add Material</button>
+      </fieldset>
+
+      <!-- Materials On Site -->
+      <fieldset>
+        <legend>Materials Available on Site</legend>
+        <table id="matOnSiteTable">
+          <thead><tr><th>Material ID</th><th>Description</th><th>Unit</th><th>Qty</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button type="button" id="addMatOnSiteRow">+ Add Material</button>
+      </fieldset>
+
+      <!-- Issues -->
+      <fieldset>
+        <legend>Site Challenges & Issues</legend>
+        <label>Any issues? 
+          <select id="hasIssues"><option value="No">No</option><option value="Yes">Yes</option></select>
+        </label>
+        <label>If yes, describe <textarea id="issueDesc" rows="2"></textarea></label>
+      </fieldset>
+
+      <!-- Photos -->
+      <fieldset>
+        <legend>Site Photos (min 3)</legend>
+        <input type="file" id="photos" multiple accept="image/*" required>
+        <small>Upload at least 3 photos (JPEG/PNG).</small>
+      </fieldset>
+
+      <!-- Confirmation -->
+      <fieldset>
+        <legend>Confirmation</legend>
+        <label><input type="checkbox" id="confirm" required> I confirm the above information is correct.</label>
+      </fieldset>
+
+      <button type="submit" id="submitBtn">Submit Daily Report</button>
+    </form>
+    <div id="status"></div>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>
