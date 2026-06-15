@@ -1,4 +1,4 @@
-const API_BASE = 'https://script.google.com/macros/s/AKfycbx14uKC7ZyT991b3jltKDa_a33_cIKFADBzZYeCXsAszlPbsS8-gA2-5hAXTlzJodUl/exec';
+const API_BASE = 'https://script.google.com/macros/s/AKfycbx14uKC7ZyT991b3jltKDa_a33_cIKFADBzZYeCXsAszlPbsS8-gA2-5hAXTlzJodUl/exec';  // <-- PUT YOUR REAL URL HERE
 let currentSiteMeta = null;
 const laborTypes = ['Mason','Laborer','Carpenter','Electrician','Plumber','Steel fixer','Operator','Driver','Painter','Other'];
 
@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('dailyForm').addEventListener('submit', handleSubmit);
 });
 
+// ---------- SITE & TASK MANAGEMENT ----------
 async function loadSites() {
   try {
     const res = await fetch(`${API_BASE}?endpoint=sites`);
@@ -38,7 +39,7 @@ async function onSiteChange() {
     const res = await fetch(`${API_BASE}?endpoint=sites`);
     const allSites = await res.json();
     currentSiteMeta = allSites.find(s => s.name === site);
-    if (currentSiteMeta.hasMasterSchedule) {
+    if (currentSiteMeta && currentSiteMeta.hasMasterSchedule) {
       const tasks = await fetchTasks(site);
       buildDropdownTaskTable(tasks);
     } else {
@@ -46,6 +47,7 @@ async function onSiteChange() {
     }
   } catch (e) {
     console.error(e);
+    buildFreeTextTaskTable(); // fallback
   }
 }
 
@@ -54,16 +56,20 @@ async function fetchTasks(site) {
   return await res.json();
 }
 
+// ---------- TASK TABLE BUILDERS (with Unit column) ----------
 function buildDropdownTaskTable(tasks) {
   const container = document.getElementById('taskTableContainer');
-  let html = `<table><thead><tr><th>#</th><th>Task</th><th>Executed QTY</th><th>Remarks</th></tr></thead><tbody>`;
+  let html = `<table><thead><tr><th>#</th><th>Task</th><th>Unit</th><th>Executed QTY</th><th>Remarks</th></tr></thead><tbody>`;
   for (let i = 1; i <= 10; i++) {
     html += `<tr>
       <td>${i}</td>
       <td><select class="taskDropdown" data-row="${i}">
         <option value="">-- Select --</option>`;
-    tasks.forEach(t => { html += `<option value="${t}">${t}</option>`; });
+    tasks.forEach(t => {
+      html += `<option value="${t}">${t}</option>`;
+    });
     html += `</select></td>
+      <td><input type="text" class="taskUnit" data-row="${i}" placeholder="e.g. m³"></td>
       <td><input type="number" class="taskQty" data-row="${i}" step="any"></td>
       <td><input type="text" class="taskRemark" data-row="${i}"></td>
     </tr>`;
@@ -74,11 +80,12 @@ function buildDropdownTaskTable(tasks) {
 
 function buildFreeTextTaskTable() {
   const container = document.getElementById('taskTableContainer');
-  let html = `<table><thead><tr><th>#</th><th>Task Description</th><th>Executed QTY</th><th>Remarks</th></tr></thead><tbody>`;
+  let html = `<table><thead><tr><th>#</th><th>Task Description</th><th>Unit</th><th>Executed QTY</th><th>Remarks</th></tr></thead><tbody>`;
   for (let i = 1; i <= 10; i++) {
     html += `<tr>
       <td>${i}</td>
       <td><input type="text" class="taskDesc" data-row="${i}"></td>
+      <td><input type="text" class="taskUnit" data-row="${i}" placeholder="e.g. m³"></td>
       <td><input type="number" class="taskQty" data-row="${i}" step="any"></td>
       <td><input type="text" class="taskRemark" data-row="${i}"></td>
     </tr>`;
@@ -87,6 +94,7 @@ function buildFreeTextTaskTable() {
   container.innerHTML = html;
 }
 
+// ---------- WORKFORCE ----------
 function populateWorkforceTable() {
   const tbody = document.querySelector('#workforceTable tbody');
   tbody.innerHTML = '';
@@ -100,31 +108,46 @@ function populateWorkforceTable() {
   });
 }
 
+// ---------- DYNAMIC ROW BUTTONS (DATA SAFE) ----------
 function setupAddButtons() {
-  document.getElementById('addEquipmentRow').onclick = () => {
+  document.getElementById('addEquipmentRow').addEventListener('click', () => {
     const tbody = document.querySelector('#equipmentTable tbody');
-    tbody.innerHTML += `<tr>
+    const newRow = tbody.insertRow(); // does NOT affect existing rows
+    newRow.innerHTML = `
       <td><input type="text"></td>
       <td><input type="text"></td>
       <td><input type="number" value="1"></td>
       <td><select><option>Good</option><option>Fair</option><option>Broken</option><option>Under Repair</option></select></td>
-      <td><input type="text"></td>
-    </tr>`;
-  };
-  document.getElementById('addMatDeliveredRow').onclick = () => {
+      <td><input type="text"></td>`;
+  });
+
+  document.getElementById('addMatDeliveredRow').addEventListener('click', () => {
     const tbody = document.querySelector('#matDeliveredTable tbody');
-    tbody.innerHTML += `<tr><td><input type="text"></td><td><input type="text"></td><td><input type="text"></td><td><input type="number" step="any"></td></tr>`;
-  };
-  document.getElementById('addMatOnSiteRow').onclick = () => {
+    const newRow = tbody.insertRow();
+    newRow.innerHTML = `
+      <td><input type="text"></td>
+      <td><input type="text"></td>
+      <td><input type="text"></td>
+      <td><input type="number" step="any"></td>`;
+  });
+
+  document.getElementById('addMatOnSiteRow').addEventListener('click', () => {
     const tbody = document.querySelector('#matOnSiteTable tbody');
-    tbody.innerHTML += `<tr><td><input type="text"></td><td><input type="text"></td><td><input type="text"></td><td><input type="number" step="any"></td></tr>`;
-  };
+    const newRow = tbody.insertRow();
+    newRow.innerHTML = `
+      <td><input type="text"></td>
+      <td><input type="text"></td>
+      <td><input type="text"></td>
+      <td><input type="number" step="any"></td>`;
+  });
 }
 
+// ---------- DATA COLLECTION (NOW WITH UNIT) ----------
 function collectTasks() {
   const rows = document.querySelectorAll('#taskTableContainer tbody tr');
   const tasks = [];
   rows.forEach(row => {
+    // Try to get either dropdown or free text task name
     let name = '';
     const sel = row.querySelector('select.taskDropdown');
     if (sel) name = sel.value;
@@ -132,10 +155,16 @@ function collectTasks() {
       const inp = row.querySelector('input.taskDesc');
       if (inp) name = inp.value;
     }
+    const unitEl = row.querySelector('input.taskUnit');
     const qtyEl = row.querySelector('input.taskQty');
     const remarkEl = row.querySelector('input.taskRemark');
     if (name && qtyEl && qtyEl.value) {
-      tasks.push({ name, executedQty: parseFloat(qtyEl.value), remark: remarkEl ? remarkEl.value : '' });
+      tasks.push({
+        name,
+        unit: unitEl ? unitEl.value : '',
+        executedQty: parseFloat(qtyEl.value),
+        remark: remarkEl ? remarkEl.value : ''
+      });
     }
   });
   return tasks;
@@ -151,7 +180,10 @@ function collectTableData(tableId, fields) {
       const input = cells[idx]?.querySelector('input, select');
       obj[field] = input ? input.value : '';
     });
-    data.push(obj);
+    // only include if at least one field has a value
+    if (Object.values(obj).some(v => v !== '' && v !== '0' && v !== '0')) {
+      data.push(obj);
+    }
   });
   return data;
 }
@@ -181,6 +213,8 @@ async function handleSubmit(e) {
     photos: await readPhotosAsBase64(photos)
   };
 
+  console.log('Submitting report:', report); // for debugging
+
   try {
     const res = await fetch(`${API_BASE}`, {
       method: 'POST',
@@ -190,6 +224,8 @@ async function handleSubmit(e) {
     if (result.success) {
       document.getElementById('status').innerText = 'Report submitted! Pending Director review.';
       document.getElementById('dailyForm').reset();
+      // Rebuild task table for current site
+      onSiteChange();
     } else {
       document.getElementById('status').innerText = 'Error: ' + (result.message || 'Unknown');
     }
