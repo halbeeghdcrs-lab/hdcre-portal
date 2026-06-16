@@ -1,4 +1,4 @@
-const API_BASE = 'https://script.google.com/macros/s/AKfycbx14uKC7ZyT991b3jltKDa_a33_cIKFADBzZYeCXsAszlPbsS8-gA2-5hAXTlzJodUl/exec';
+const API_BASE = 'https://script.google.com/macros/s/AKfycbx14uKC7ZyT991b3jltKDa_a33_cIKFADBzZYeCXsAszlPbsS8-gA2-5hAXTlzJodUl/exec';  // ⚠️ Replace with your real deployment URL
 let currentSiteMeta = null;
 const laborTypes = ['Mason','Laborer','Carpenter','Electrician','Plumber','Steel fixer','Operator','Driver','Painter','Other'];
 
@@ -117,7 +117,7 @@ function populateWorkforceTable() {
 function setupAddButtons() {
   document.getElementById('addEquipmentRow').addEventListener('click', () => {
     const tbody = document.querySelector('#equipmentTable tbody');
-    const newRow = tbody.insertRow();
+    const newRow = tbody.insertRow(); // does NOT erase existing rows
     newRow.innerHTML = `
       <td><input type="text"></td>
       <td><input type="text"></td>
@@ -184,6 +184,7 @@ function collectTableData(tableId, fields) {
       const input = cells[idx]?.querySelector('input, select');
       obj[field] = input ? input.value : '';
     });
+    // Only include if at least one field has a non‑default value
     if (Object.values(obj).some(v => v !== '' && v !== '0')) {
       data.push(obj);
     }
