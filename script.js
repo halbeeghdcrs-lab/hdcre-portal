@@ -1,4 +1,4 @@
-const API_BASE = 'https://script.google.com/macros/s/AKfycbx14uKC7ZyT991b3jltKDa_a33_cIKFADBzZYeCXsAszlPbsS8-gA2-5hAXTlzJodUl/exec';  // <-- PUT YOUR REAL URL HERE
+const API_BASE = 'https://script.google.com/macros/s/AKfycbx14uKC7ZyT991b3jltKDa_a33_cIKFADBzZYeCXsAszlPbsS8-gA2-5hAXTlzJodUl/exec';
 let currentSiteMeta = null;
 const laborTypes = ['Mason','Laborer','Carpenter','Electrician','Plumber','Steel fixer','Operator','Driver','Painter','Other'];
 
@@ -47,13 +47,18 @@ async function onSiteChange() {
     }
   } catch (e) {
     console.error(e);
-    buildFreeTextTaskTable(); // fallback
+    buildFreeTextTaskTable();
   }
 }
 
 async function fetchTasks(site) {
-  const res = await fetch(`${API_BASE}?endpoint=tasks&site=${encodeURIComponent(site)}`);
-  return await res.json();
+  const url = `${API_BASE}?endpoint=tasks&site=${encodeURIComponent(site)}`;
+  console.log('Fetching tasks for site:', site);
+  console.log('Full URL:', url);
+  const res = await fetch(url);
+  const data = await res.json();
+  console.log('Tasks received:', data);
+  return data;
 }
 
 // ---------- TASK TABLE BUILDERS (with Unit column) ----------
@@ -112,7 +117,7 @@ function populateWorkforceTable() {
 function setupAddButtons() {
   document.getElementById('addEquipmentRow').addEventListener('click', () => {
     const tbody = document.querySelector('#equipmentTable tbody');
-    const newRow = tbody.insertRow(); // does NOT affect existing rows
+    const newRow = tbody.insertRow();
     newRow.innerHTML = `
       <td><input type="text"></td>
       <td><input type="text"></td>
@@ -147,7 +152,6 @@ function collectTasks() {
   const rows = document.querySelectorAll('#taskTableContainer tbody tr');
   const tasks = [];
   rows.forEach(row => {
-    // Try to get either dropdown or free text task name
     let name = '';
     const sel = row.querySelector('select.taskDropdown');
     if (sel) name = sel.value;
@@ -180,8 +184,7 @@ function collectTableData(tableId, fields) {
       const input = cells[idx]?.querySelector('input, select');
       obj[field] = input ? input.value : '';
     });
-    // only include if at least one field has a value
-    if (Object.values(obj).some(v => v !== '' && v !== '0' && v !== '0')) {
+    if (Object.values(obj).some(v => v !== '' && v !== '0')) {
       data.push(obj);
     }
   });
@@ -213,7 +216,7 @@ async function handleSubmit(e) {
     photos: await readPhotosAsBase64(photos)
   };
 
-  console.log('Submitting report:', report); // for debugging
+  console.log('Submitting report:', report);
 
   try {
     const res = await fetch(`${API_BASE}`, {
@@ -224,7 +227,6 @@ async function handleSubmit(e) {
     if (result.success) {
       document.getElementById('status').innerText = 'Report submitted! Pending Director review.';
       document.getElementById('dailyForm').reset();
-      // Rebuild task table for current site
       onSiteChange();
     } else {
       document.getElementById('status').innerText = 'Error: ' + (result.message || 'Unknown');
