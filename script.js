@@ -1,8 +1,8 @@
-const API_BASE = 'https://script.google.com/macros/s/AKfycbx14uKC7ZyT991b3jltKDa_a33_cIKFADBzZYeCXsAszlPbsS8-gA2-5hAXTlzJodUl/exec';  // ⚠️ Replace with your real deployment URL
+const API_BASE = 'https://script.google.com/macros/s/AKfycbx14uKC7ZyT991b3jltKDa_a33_cIKFADBzZYeCXsAszlPbsS8-gA2-5hAXTlzJodUl/exec';  // ⚠️ CHANGE THIS
 let currentSiteMeta = null;
 const laborTypes = ['Mason','Laborer','Carpenter','Electrician','Plumber','Steel fixer','Operator','Driver','Painter','Other'];
 
-// ---------- LOGIN FLOW ----------
+// ---------- LOGIN FLOW (role‑aware) ----------
 document.addEventListener('DOMContentLoaded', () => {
   const loggedUser = sessionStorage.getItem('hdcre_user');
   if (loggedUser) {
@@ -28,9 +28,11 @@ async function attemptLogin() {
   try {
     const res = await fetch(`${API_BASE}?action=login&name=${encodeURIComponent(name)}&password=${encodeURIComponent(password)}`);
     const data = await res.json();
-    if (data.success) {
+    if (data.success && data.role === 'RE') {
       sessionStorage.setItem('hdcre_user', name);
       showMainApp(name);
+    } else if (data.success && data.role !== 'RE') {
+      errorDiv.textContent = 'This portal is only for Resident Engineers.';
     } else {
       errorDiv.textContent = 'Invalid name or password.';
     }
@@ -43,7 +45,7 @@ function showMainApp(userName) {
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('mainApp').classList.remove('hidden');
   document.getElementById('loggedUser').textContent = userName;
-  document.getElementById('reName').value = userName; // pre-fill
+  document.getElementById('reName').value = userName; // pre-fill RE name
   // Start the portal
   loadSites();
   populateWorkforceTable();
@@ -108,6 +110,7 @@ async function fetchTasks(site) {
   return data;
 }
 
+// ---------- TASK TABLE BUILDERS (with Unit column) ----------
 function buildDropdownTaskTable(tasks) {
   const container = document.getElementById('taskTableContainer');
   let html = `<table><thead><tr><th>#</th><th>Task</th><th>Unit</th><th>Executed QTY</th><th>Remarks</th></tr></thead><tbody>`;
@@ -116,7 +119,9 @@ function buildDropdownTaskTable(tasks) {
       <td>${i}</td>
       <td><select class="taskDropdown" data-row="${i}">
         <option value="">-- Select --</option>`;
-    tasks.forEach(t => { html += `<option value="${t}">${t}</option>`; });
+    tasks.forEach(t => {
+      html += `<option value="${t}">${t}</option>`;
+    });
     html += `</select></td>
       <td><input type="text" class="taskUnit" data-row="${i}" placeholder="e.g. m³"></td>
       <td><input type="number" class="taskQty" data-row="${i}" step="any"></td>
@@ -157,7 +162,7 @@ function populateWorkforceTable() {
   });
 }
 
-// ---------- DYNAMIC ROW BUTTONS (DATA SAFE) ----------
+// ---------- DYNAMIC ROW BUTTONS (safe – does not erase existing rows) ----------
 function setupAddButtons() {
   document.getElementById('addEquipmentRow').addEventListener('click', () => {
     const tbody = document.querySelector('#equipmentTable tbody');
