@@ -3,18 +3,47 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Halbeeg RE Daily Portal</title>
+  <title>Halbeeg RE Portal – Login</title>
   <link rel="stylesheet" href="style.css">
+  <style>
+    .login-box {
+      max-width: 400px;
+      margin: 4rem auto;
+      background: white;
+      padding: 2rem;
+      border-radius: 16px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+      text-align: center;
+    }
+    .login-box h2 { color: #00695C; margin-bottom: 1.5rem; }
+    .login-box input { margin-bottom: 1rem; }
+    .login-box button { width: 100%; margin-top: 0.5rem; }
+    .error-msg { color: #C44536; font-size: 0.9rem; margin-top: 0.5rem; }
+    .hidden { display: none !important; }
+  </style>
 </head>
 <body>
-  <div class="container">
+  <!-- LOGIN SCREEN -->
+  <div id="loginScreen" class="login-box">
+    <h2>🔐 Resident Engineer Login</h2>
+    <input type="text" id="loginName" placeholder="Full Name" required>
+    <input type="password" id="loginPassword" placeholder="Password" required>
+    <button id="loginBtn">Login</button>
+    <div class="error-msg" id="loginError"></div>
+  </div>
+
+  <!-- MAIN PORTAL (hidden until login) -->
+  <div id="mainApp" class="container hidden">
     <header>
       <img src="https://halbeeghdcrs-lab.github.io/HALBEEG-HDCRS/logo.png" alt="Halbeeg Logo" class="logo">
       <h1>Daily Site Report</h1>
+      <p style="text-align:right; margin-top:-1rem;">
+        <small>Logged in as <span id="loggedUser"></span> | 
+        <a href="#" id="logoutLink">Logout</a></small>
+      </p>
     </header>
 
     <form id="dailyForm">
-      <!-- Basic Info -->
       <fieldset>
         <legend>Basic Information</legend>
         <label>Site Name <select id="siteSelect" required></select></label>
@@ -33,13 +62,11 @@
         <label>Contractor Activity Summary <textarea id="activitySummary" rows="3" required></textarea></label>
       </fieldset>
 
-      <!-- Work Progress -->
       <fieldset id="workProgressSection">
         <legend>Work Progress</legend>
         <div id="taskTableContainer"></div>
       </fieldset>
 
-      <!-- Workforce -->
       <fieldset>
         <legend>Workforce Availability</legend>
         <table id="workforceTable">
@@ -48,7 +75,6 @@
         </table>
       </fieldset>
 
-      <!-- Equipment -->
       <fieldset>
         <legend>Equipment</legend>
         <table id="equipmentTable">
@@ -58,7 +84,6 @@
         <button type="button" id="addEquipmentRow">+ Add Equipment</button>
       </fieldset>
 
-      <!-- Materials Delivered -->
       <fieldset>
         <legend>Materials Delivered Today</legend>
         <table id="matDeliveredTable">
@@ -68,7 +93,6 @@
         <button type="button" id="addMatDeliveredRow">+ Add Material</button>
       </fieldset>
 
-      <!-- Materials On Site -->
       <fieldset>
         <legend>Materials Available on Site</legend>
         <table id="matOnSiteTable">
@@ -78,7 +102,6 @@
         <button type="button" id="addMatOnSiteRow">+ Add Material</button>
       </fieldset>
 
-      <!-- Issues -->
       <fieldset>
         <legend>Site Challenges & Issues</legend>
         <label>Any issues? 
@@ -87,14 +110,12 @@
         <label>If yes, describe <textarea id="issueDesc" rows="2"></textarea></label>
       </fieldset>
 
-      <!-- Photos -->
       <fieldset>
         <legend>Site Photos (min 3)</legend>
         <input type="file" id="photos" multiple accept="image/*" required>
         <small>Upload at least 3 photos (JPEG/PNG).</small>
       </fieldset>
 
-      <!-- Confirmation -->
       <fieldset>
         <legend>Confirmation</legend>
         <label><input type="checkbox" id="confirm" required> I confirm the above information is correct.</label>
@@ -104,6 +125,7 @@
     </form>
     <div id="status"></div>
   </div>
+
   <script src="script.js"></script>
 </body>
 </html>
