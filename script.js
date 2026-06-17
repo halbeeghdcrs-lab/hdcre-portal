@@ -2,12 +2,59 @@ const API_BASE = 'https://script.google.com/macros/s/AKfycbx14uKC7ZyT991b3jltKDa
 let currentSiteMeta = null;
 const laborTypes = ['Mason','Laborer','Carpenter','Electrician','Plumber','Steel fixer','Operator','Driver','Painter','Other'];
 
-document.addEventListener('DOMContentLoaded', async () => {
-  await loadSites();
+// ---------- LOGIN FLOW ----------
+document.addEventListener('DOMContentLoaded', () => {
+  const loggedUser = sessionStorage.getItem('hdcre_user');
+  if (loggedUser) {
+    showMainApp(loggedUser);
+  } else {
+    document.getElementById('loginScreen').classList.remove('hidden');
+    document.getElementById('mainApp').classList.add('hidden');
+  }
+  document.getElementById('loginBtn').addEventListener('click', attemptLogin);
+  document.getElementById('logoutLink').addEventListener('click', logout);
+});
+
+async function attemptLogin() {
+  const name = document.getElementById('loginName').value.trim();
+  const password = document.getElementById('loginPassword').value.trim();
+  const errorDiv = document.getElementById('loginError');
+
+  if (!name || !password) {
+    errorDiv.textContent = 'Please enter both name and password.';
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}?action=login&name=${encodeURIComponent(name)}&password=${encodeURIComponent(password)}`);
+    const data = await res.json();
+    if (data.success) {
+      sessionStorage.setItem('hdcre_user', name);
+      showMainApp(name);
+    } else {
+      errorDiv.textContent = 'Invalid name or password.';
+    }
+  } catch (e) {
+    errorDiv.textContent = 'Network error. Try again.';
+  }
+}
+
+function showMainApp(userName) {
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('mainApp').classList.remove('hidden');
+  document.getElementById('loggedUser').textContent = userName;
+  document.getElementById('reName').value = userName; // pre-fill
+  // Start the portal
+  loadSites();
   populateWorkforceTable();
   setupAddButtons();
   document.getElementById('dailyForm').addEventListener('submit', handleSubmit);
-});
+}
+
+function logout() {
+  sessionStorage.removeItem('hdcre_user');
+  location.reload();
+}
 
 // ---------- SITE & TASK MANAGEMENT ----------
 async function loadSites() {
@@ -61,7 +108,6 @@ async function fetchTasks(site) {
   return data;
 }
 
-// ---------- TASK TABLE BUILDERS (with Unit column) ----------
 function buildDropdownTaskTable(tasks) {
   const container = document.getElementById('taskTableContainer');
   let html = `<table><thead><tr><th>#</th><th>Task</th><th>Unit</th><th>Executed QTY</th><th>Remarks</th></tr></thead><tbody>`;
@@ -70,9 +116,7 @@ function buildDropdownTaskTable(tasks) {
       <td>${i}</td>
       <td><select class="taskDropdown" data-row="${i}">
         <option value="">-- Select --</option>`;
-    tasks.forEach(t => {
-      html += `<option value="${t}">${t}</option>`;
-    });
+    tasks.forEach(t => { html += `<option value="${t}">${t}</option>`; });
     html += `</select></td>
       <td><input type="text" class="taskUnit" data-row="${i}" placeholder="e.g. m³"></td>
       <td><input type="number" class="taskQty" data-row="${i}" step="any"></td>
@@ -117,7 +161,7 @@ function populateWorkforceTable() {
 function setupAddButtons() {
   document.getElementById('addEquipmentRow').addEventListener('click', () => {
     const tbody = document.querySelector('#equipmentTable tbody');
-    const newRow = tbody.insertRow(); // does NOT erase existing rows
+    const newRow = tbody.insertRow();
     newRow.innerHTML = `
       <td><input type="text"></td>
       <td><input type="text"></td>
@@ -147,7 +191,7 @@ function setupAddButtons() {
   });
 }
 
-// ---------- DATA COLLECTION (NOW WITH UNIT) ----------
+// ---------- DATA COLLECTION ----------
 function collectTasks() {
   const rows = document.querySelectorAll('#taskTableContainer tbody tr');
   const tasks = [];
@@ -184,7 +228,6 @@ function collectTableData(tableId, fields) {
       const input = cells[idx]?.querySelector('input, select');
       obj[field] = input ? input.value : '';
     });
-    // Only include if at least one field has a non‑default value
     if (Object.values(obj).some(v => v !== '' && v !== '0')) {
       data.push(obj);
     }
