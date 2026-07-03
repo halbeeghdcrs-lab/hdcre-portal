@@ -35,18 +35,51 @@ function attemptLogin() {
   const name = document.getElementById('loginName').value.trim();
   const pw = document.getElementById('loginPassword').value.trim();
   const err = document.getElementById('loginError');
-  if (!name || !pw) { err.textContent = 'Enter name and password.'; return; }
-  fetch(`${API_BASE}?action=login&name=${encodeURIComponent(name)}&password=${encodeURIComponent(pw)}`)
-    .then(r => r.json()).then(d => {
+  const btn = document.getElementById('loginBtn');
+  err.textContent = '';
+  err.style.color = '#e74c3c';
+  if (!name || !pw) { err.textContent = 'Please enter both Name and Password.'; return; }
+
+  // Loading state
+  btn.disabled = true;
+  btn.textContent = 'Checking...';
+
+  const url = `${API_BASE}?action=login&name=${encodeURIComponent(name)}&password=${encodeURIComponent(pw)}`;
+  console.log('[HDCRS] Login attempt for:', name);
+  console.log('[HDCRS] Fetching:', url);
+
+  fetch(url)
+    .then(r => {
+      console.log('[HDCRS] Response status:', r.status, r.ok);
+      if (!r.ok) throw new Error('Server returned ' + r.status);
+      return r.json();
+    })
+    .then(d => {
+      console.log('[HDCRS] Server response:', JSON.stringify(d));
       if (d.success && d.role === 'RE') {
         sessionStorage.setItem('hdcre_user', name);
+        sessionStorage.setItem('hdcre_role', d.role);
         showMainApp(name);
+      } else if (d.success && d.role) {
+        err.textContent = 'Access denied — this portal is for Resident Engineers only. Your role is: ' + d.role;
       } else if (d.success) {
-        err.textContent = 'This portal is only for Resident Engineers.';
+        err.textContent = 'Login OK but no role assigned. Ask admin to set your Role in Staff_Accounts.';
       } else {
-        err.textContent = 'Invalid name or password.';
+        err.textContent = 'Invalid name or password. Check Staff_Accounts sheet in Google Sheets.';
       }
-    }).catch(() => { err.textContent = 'Network error.'; });
+    })
+    .catch(e => {
+      console.error('[HDCRS] Login error:', e);
+      if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
+        err.textContent = 'Network error — cannot reach server. Check: (1) API_BASE URL in script.js, (2) Apps Script deployed as "Web App" with "Anyone" access.';
+      } else {
+        err.textContent = 'Error: ' + e.message;
+      }
+    })
+    .finally(() => {
+      btn.disabled = false;
+      btn.textContent = 'Login';
+    });
 }
 
 function showMainApp(name) {
