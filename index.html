@@ -3,125 +3,215 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Halbeeg RE Portal – Login</title>
+  <title>Halbeeg RE Daily Portal</title>
   <link rel="stylesheet" href="style.css">
-  <style>
-    .login-box {
-      max-width: 400px;
-      margin: 4rem auto;
-      background: white;
-      padding: 2rem;
-      border-radius: 16px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.08);
-      text-align: center;
-    }
-    .login-box h2 { color: #00695C; margin-bottom: 1.5rem; }
-    .login-box input { margin-bottom: 1rem; }
-    .login-box button { width: 100%; margin-top: 0.5rem; }
-    .error-msg { color: #C44536; font-size: 0.9rem; margin-top: 0.5rem; }
-    .hidden { display: none !important; }
-  </style>
 </head>
 <body>
-  <!-- LOGIN SCREEN -->
+  <!-- Login Screen -->
   <div id="loginScreen" class="login-box">
-    <h2>🔐 Resident Engineer Login</h2>
+    <img src="https://raw.githubusercontent.com/halbeeghdcrs-lab/HALBEEG-HDCRS/main/logo.png" alt="Halbeeg Logo" class="login-logo" onerror="this.style.display='none'">
+    <h2>Resident Engineer Portal</h2>
+    <p class="login-subtitle">Halbeeg Architect &amp; Engineering Consultancy</p>
     <input type="text" id="loginName" placeholder="Full Name" required>
     <input type="password" id="loginPassword" placeholder="Password" required>
     <button id="loginBtn">Login</button>
     <div class="error-msg" id="loginError"></div>
   </div>
 
-  <!-- MAIN PORTAL (hidden until login) -->
+  <!-- Main Portal -->
   <div id="mainApp" class="container hidden">
-    <header>
-      <img src="https://halbeeghdcrs-lab.github.io/HALBEEG-HDCRS/logo.png" alt="Halbeeg Logo" class="logo">
-      <h1>Daily Site Report</h1>
-      <p style="text-align:right; margin-top:-1rem;">
-        <small>Logged in as <span id="loggedUser"></span> | 
+    <header class="portal-header">
+      <img src="https://raw.githubusercontent.com/halbeeghdcrs-lab/HALBEEG-HDCRS/main/logo.png" alt="Halbeeg" class="header-logo" onerror="this.style.display='none'">
+      <div class="header-text">
+        <h1>Daily Site Report</h1>
+        <p class="header-sub">Halbeeg Architect and Engineering Consultancy</p>
+      </div>
+      <p class="header-user">
+        <small>Logged in as <strong id="loggedUser"></strong> |
         <a href="#" id="logoutLink">Logout</a></small>
       </p>
     </header>
 
     <form id="dailyForm">
+      <!-- 1. BASIC INFORMATION -->
       <fieldset>
-        <legend>Basic Information</legend>
-        <label>Site Name <select id="siteSelect" required></select></label>
-        <label>Report Date <input type="date" id="reportDate" required></label>
-        <label>Weather Morning 
-          <select id="weatherAM">
-            <option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Dusty</option><option>Foggy</option><option>Other</option>
-          </select>
-        </label>
-        <label>Weather Afternoon 
-          <select id="weatherPM">
-            <option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Dusty</option><option>Foggy</option><option>Other</option>
-          </select>
-        </label>
-        <label>Resident Engineer <input type="text" id="reName" required></label>
-        <label>Contractor Activity Summary <textarea id="activitySummary" rows="3" required></textarea></label>
+        <legend>1. Basic Information</legend>
+        <div class="form-row">
+          <label>Site Name <select id="siteSelect" required><option value="">-- Select --</option></select></label>
+          <label>Report Date <input type="date" id="reportDate" required></label>
+        </div>
+        <div class="form-row three-col">
+          <label>Weather AM
+            <select id="weatherAM">
+              <option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Dusty</option><option>Foggy</option><option>Windy</option><option>Other</option>
+            </select>
+          </label>
+          <label>Weather PM
+            <select id="weatherPM">
+              <option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Dusty</option><option>Foggy</option><option>Windy</option><option>Other</option>
+            </select>
+          </label>
+          <label>Resident Engineer <input type="text" id="reName" required readonly></label>
+        </div>
+        <label>Contractor Activity Summary <textarea id="activitySummary" rows="2" required></textarea></label>
       </fieldset>
 
-      <fieldset id="workProgressSection">
-        <legend>Work Progress</legend>
-        <div id="taskTableContainer"></div>
+      <!-- 2. BLOCK STATUS OVERVIEW -->
+      <fieldset>
+        <legend>2. Block Status Overview</legend>
+        <p class="hint">Set the current status for each block. Performance details go to Section 13.</p>
+        <div id="blockStatusContainer"></div>
       </fieldset>
 
+      <!-- 3. BLOCK-WISE WORK PROGRESS -->
       <fieldset>
-        <legend>Workforce Availability</legend>
+        <legend>3. Block-Wise Work Progress</legend>
+        <div id="workProgressContainer">
+          <p class="hint">Select a site first to load blocks and scheduled tasks.</p>
+        </div>
+        <button type="button" id="addTaskRow" class="btn-sm">+ Add Task Row</button>
+      </fieldset>
+
+      <!-- 4. WORKFORCE AVAILABILITY -->
+      <fieldset>
+        <legend>4. Workforce Availability</legend>
+        <p class="hint">Project-wide workforce tracking. Use Comments for block allocation notes.</p>
         <table id="workforceTable">
-          <thead><tr><th>Labor Type</th><th>Planned</th><th>Available</th><th>Comments</th></tr></thead>
+          <thead><tr><th>Labor Type</th><th>Planned</th><th>Available</th><th>Comments / Allocation</th></tr></thead>
           <tbody></tbody>
+          <tfoot><tr class="total-row"><td><strong>Total</strong></td><td id="wfPlannedTotal">0</td><td id="wfAvailTotal">0</td><td></td></tr></tfoot>
         </table>
       </fieldset>
 
+      <!-- 5. EQUIPMENT AVAILABILITY -->
       <fieldset>
-        <legend>Equipment</legend>
+        <legend>5. Equipment Availability</legend>
+        <p class="hint">Project-wide equipment tracking. Use Comments for block allocation notes.</p>
         <table id="equipmentTable">
-          <thead><tr><th>Eq ID</th><th>Type</th><th>Qty</th><th>Condition</th><th>Comments</th></tr></thead>
+          <thead><tr><th>Equipment Type</th><th>Qty</th><th>Condition</th><th>Comments / Allocation</th></tr></thead>
           <tbody></tbody>
         </table>
-        <button type="button" id="addEquipmentRow">+ Add Equipment</button>
+        <button type="button" class="btn-sm add-row-btn" data-target="equipmentTable">+ Add Equipment</button>
       </fieldset>
 
+      <!-- 6. MATERIALS DELIVERED TODAY -->
       <fieldset>
-        <legend>Materials Delivered Today</legend>
+        <legend>6. Materials Delivered Today</legend>
         <table id="matDeliveredTable">
-          <thead><tr><th>Material ID</th><th>Description</th><th>Unit</th><th>Qty</th></tr></thead>
+          <thead><tr><th>Description</th><th>Unit</th><th>Qty</th><th>Allocated Block</th></tr></thead>
           <tbody></tbody>
         </table>
-        <button type="button" id="addMatDeliveredRow">+ Add Material</button>
+        <button type="button" class="btn-sm add-row-btn" data-target="matDeliveredTable">+ Add Material</button>
       </fieldset>
 
+      <!-- 7. MATERIALS ON SITE -->
       <fieldset>
-        <legend>Materials Available on Site</legend>
+        <legend>7. Materials Available On Site</legend>
         <table id="matOnSiteTable">
-          <thead><tr><th>Material ID</th><th>Description</th><th>Unit</th><th>Qty</th></tr></thead>
+          <thead><tr><th>Description</th><th>Unit</th><th>Qty</th><th>Allocated Block</th></tr></thead>
           <tbody></tbody>
         </table>
-        <button type="button" id="addMatOnSiteRow">+ Add Material</button>
+        <button type="button" class="btn-sm add-row-btn" data-target="matOnSiteTable">+ Add Material</button>
       </fieldset>
 
+      <!-- 8. SITE CHALLENGES, ISSUES & DELAYS -->
       <fieldset>
-        <legend>Site Challenges & Issues</legend>
-        <label>Any issues? 
-          <select id="hasIssues"><option value="No">No</option><option value="Yes">Yes</option></select>
+        <legend>8. Site Challenges, Issues &amp; Delays</legend>
+        <table id="issuesTable">
+          <thead><tr><th>Block</th><th>Issue / Delay Details</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button type="button" class="btn-sm add-row-btn" data-target="issuesTable">+ Add Issue</button>
+      </fieldset>
+
+      <!-- 9. TESTS CONDUCTED -->
+      <fieldset>
+        <legend>9. Tests Conducted</legend>
+        <table id="testsTable">
+          <thead><tr><th>Test</th><th>Block</th><th>Result</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button type="button" class="btn-sm add-row-btn" data-target="testsTable">+ Add Test</button>
+      </fieldset>
+
+      <!-- 10. CORRESPONDENCES -->
+      <fieldset>
+        <legend>10. Correspondences</legend>
+        <table id="correspondencesTable">
+          <thead><tr><th>Date</th><th>From</th><th>To</th><th>Subject</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button type="button" class="btn-sm add-row-btn" data-target="correspondencesTable">+ Add Correspondence</button>
+      </fieldset>
+
+      <!-- 11. SAFETY ISSUES -->
+      <fieldset>
+        <legend>11. Safety Issues</legend>
+        <table id="safetyTable">
+          <thead><tr><th>Issue</th><th>Block</th><th>Action Taken</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button type="button" class="btn-sm add-row-btn" data-target="safetyTable">+ Add Safety Issue</button>
+      </fieldset>
+
+      <!-- 12. STAKEHOLDER CONTRIBUTION -->
+      <fieldset>
+        <legend>12. Stakeholder Contribution</legend>
+        <table id="stakeholderTable">
+          <thead><tr><th>Stakeholder</th><th>Contribution</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button type="button" class="btn-sm add-row-btn" data-target="stakeholderTable">+ Add</button>
+      </fieldset>
+
+      <!-- 13. PERFORMANCE ANALYSIS & MONITORING -->
+      <fieldset class="performance-fieldset">
+        <legend>13. Performance Analysis &amp; Monitoring</legend>
+        <label>Overall Resource Efficiency Rating
+          <select id="resourceEfficiency">
+            <option value="">-- Select --</option>
+            <option>Excellent</option><option>Good</option><option>Fair</option><option>Poor</option>
+          </select>
         </label>
-        <label>If yes, describe <textarea id="issueDesc" rows="2"></textarea></label>
+        <div id="performanceContainer">
+          <p class="hint">Performance rows load with block statuses.</p>
+        </div>
+        <label>Recommendations <textarea id="recommendations" rows="3" placeholder="1. ...&#10;2. ..."></textarea></label>
       </fieldset>
 
+      <!-- 14. SITE ORDERS (Instructions Issued) -->
       <fieldset>
-        <legend>Site Photos (min 3)</legend>
-        <input type="file" id="photos" multiple accept="image/*" required>
-        <small>Upload at least 3 photos (JPEG/PNG).</small>
+        <legend>14. Site Orders (Instructions Issued)</legend>
+        <table id="siteOrdersTable">
+          <thead><tr><th>Order No.</th><th>Issued To</th><th>Instruction</th><th>Deadline</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button type="button" class="btn-sm add-row-btn" data-target="siteOrdersTable">+ Add Order</button>
       </fieldset>
 
+      <!-- 15. HOLD POINT REQUESTS -->
+      <fieldset>
+        <legend>15. Hold-Point Requests</legend>
+        <p class="hint">List any works requiring inspection before proceeding (SOP 03 Field 9).</p>
+        <textarea id="holdPointRequests" rows="2" placeholder="List any works requiring inspection before proceeding..."></textarea>
+      </fieldset>
+
+      <!-- 16. SITE PHOTOS -->
+      <fieldset>
+        <legend>16. Site Photos (min 3)</legend>
+        <div id="photoPreview" class="photo-preview"></div>
+        <input type="file" id="photos" multiple accept="image/*" required>
+        <p class="hint">Upload at least 3 photos (JPEG/PNG). After selecting, assign each photo a Block and Caption below.</p>
+        <div id="photoMetaContainer"></div>
+      </fieldset>
+
+      <!-- 17. CONFIRMATION -->
       <fieldset>
         <legend>Confirmation</legend>
-        <label><input type="checkbox" id="confirm" required> I confirm the above information is correct.</label>
+        <label class="checkbox-label"><input type="checkbox" id="confirm" required> I confirm the above information is correct and complete to the best of my knowledge.</label>
       </fieldset>
 
-      <button type="submit" id="submitBtn">Submit Daily Report</button>
+      <button type="submit" id="submitBtn" class="submit-btn">Submit Daily Report</button>
     </form>
     <div id="status"></div>
   </div>
