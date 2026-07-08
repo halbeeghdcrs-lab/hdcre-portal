@@ -1,3 +1,4 @@
+/* Version 4.1 */
 :root {
   --primary: #00695C;
   --primary-dark: #004D40;
@@ -312,6 +313,197 @@ th {
 small { color: #5D4037; font-size: 0.8rem; }
 .hint { color: #888; font-size: 0.85rem; font-style: italic; margin: 0 0 0.4rem; }
 
+/* ========== TAB BAR ========== */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  margin-bottom: 1.2rem;
+  border-bottom: 2px solid var(--border);
+}
+.tab-btn {
+  background: transparent;
+  color: var(--text);
+  padding: 0.6rem 1.5rem;
+  border: none;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  margin: 0;
+  transition: all 0.2s;
+}
+.tab-btn:hover {
+  color: var(--primary);
+  background: var(--primary-light);
+}
+.tab-btn.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  background: var(--primary-light);
+}
+
+/* ========== EDIT MODE BANNER ========== */
+.edit-mode-banner {
+  background: #FFF3E0;
+  border: 1px solid #E65100;
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  margin-bottom: 1rem;
+  font-weight: 600;
+  color: #E65100;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+/* ========== DRAFT BANNER ========== */
+.draft-banner {
+  background: #E8F5E9;
+  border: 1px solid #66BB6A;
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.88rem;
+  color: #2E7D32;
+}
+.draft-banner a {
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ========== CANCEL BUTTON ========== */
+.cancel-btn {
+  background: var(--danger);
+  color: white;
+  width: auto;
+  padding: 0.6rem 1.5rem;
+  border-radius: 30px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 0.5rem;
+  margin-right: 0.5rem;
+  display: inline-block;
+}
+
+/* ========== MY REPORTS SECTION ========== */
+.my-reports-section {
+  padding: 0.5rem 0;
+}
+.reports-list-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.reports-list-table th {
+  background: #f3e7da;
+  color: var(--primary-dark);
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  border-bottom: 2px solid var(--primary);
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+.reports-list-table td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+/* ========== STATUS BADGES ========== */
+.badge {
+  padding: 0.15rem 0.6rem;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 0.8rem;
+  display: inline-block;
+}
+.badge.Pending {
+  background: #FFF3E0;
+  color: #E65100;
+}
+.badge.Approved {
+  background: #E0F2F1;
+  color: var(--primary);
+}
+.badge.Rejected {
+  background: #FFEBEE;
+  color: var(--danger);
+}
+
+/* ========== REPORT VIEW MODAL ========== */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 1000;
+  padding: 2rem 1rem;
+  overflow-y: auto;
+}
+.modal-content {
+  background: white;
+  border-radius: 16px;
+  padding: 1.5rem;
+  max-width: 900px;
+  width: 100%;
+  max-height: none;
+  position: relative;
+}
+.modal-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 1rem;
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  cursor: pointer;
+  color: #999;
+  padding: 0;
+  margin: 0;
+}
+.modal-close:hover { color: var(--danger); }
+
+/* ========== REPORT DETAIL STYLES ========== */
+.detail-section {
+  margin: 1rem 0 0.5rem;
+}
+.detail-section h4 {
+  color: var(--primary);
+  margin: 0 0 0.3rem;
+  font-size: 0.95rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.2rem;
+}
+.meta-grid {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 0.2rem 10px;
+  font-size: 0.9rem;
+  margin-bottom: 0.8rem;
+}
+.meta-grid .label {
+  font-weight: 600;
+  color: #555;
+}
+.photo-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+}
+.photo-grid img {
+  max-width: 140px;
+  max-height: 110px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  object-fit: cover;
+}
+
 /* ========== RESPONSIVE ========== */
 @media (max-width: 600px) {
   .form-row, .form-row.three-col { grid-template-columns: 1fr; }
@@ -319,4 +511,7 @@ small { color: #5D4037; font-size: 0.8rem; }
   .portal-header { flex-wrap: wrap; justify-content: center; text-align: center; }
   .header-user { text-align: center; width: 100%; }
   .photo-meta-grid { grid-template-columns: 1fr; }
+  .tab-btn { padding: 0.5rem 0.8rem; font-size: 0.85rem; }
+  .reports-list-table { font-size: 0.78rem; }
+  .modal-content { padding: 1rem; }
 }
