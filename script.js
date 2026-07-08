@@ -1,8 +1,14 @@
-const API_BASE = 'https://script.google.com/macros/s/AKfycbw9ZWvh8X6vXRv0RA6MpYqE3OqLqNGNX9_w2pZP4G0ZthdweZ6M2gKYzyfqvgNhHL5s/exec';
+/* Version 4.1 */
+const API_BASE = 'https://script.google.com/macros/s/AKfycbx0d_55nHHen1oxMAVqGYXaOTp8B8VZNLzelZc8beZrlTZDPND2_-17X1y1HWYRJrw-/exec';
 let currentBlocks = [];
 let currentTasks = {};
 let currentLaborTypes = [];
 let blockOptionsHTML = '';
+let editingReportId = null;
+let draftTimer = null;
+let allReports = [];
+
+// ========== INITIALIZATION ==========
 
 document.addEventListener('DOMContentLoaded', () => {
   const u = sessionStorage.getItem('hdcre_user');
@@ -19,66 +25,58 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('dailyForm').addEventListener('submit', handleSubmit);
   document.getElementById('reportDate').valueAsDate = new Date();
-
-  // Photo file input listener for preview + meta fields
   document.getElementById('photos').addEventListener('change', onPhotosSelected);
 
-  // Add initial empty rows for dynamic tables
   ['issuesTable', 'testsTable', 'correspondencesTable', 'safetyTable',
     'stakeholderTable', 'siteOrdersTable', 'equipmentTable',
     'matDeliveredTable', 'matOnSiteTable'].forEach(id => addDynamicRow(id));
+
+  // Tab switching
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+
+  // Draft auto-save every 30 seconds
+  draftTimer = setInterval(saveDraft, 30000);
+
+  // Check for draft on load
+  checkForDraft();
+
+  // Cancel edit
+  document.getElementById('cancelEditBtn').addEventListener('click', cancelEdit);
+
+  // Modal close
+  document.getElementById('closeViewBtn').addEventListener('click', () => {
+    document.getElementById('reportViewModal').classList.add('hidden');
+  });
+  document.getElementById('reportViewModal').addEventListener('click', function(e) {
+    if (e.target === this) this.classList.add('hidden');
+  });
 });
 
 // ========== LOGIN ==========
 
 function attemptLogin() {
   const name = document.getElementById('loginName').value.trim();
-  const pw = document.getElementById('loginPassword').value.trim();
-  const err = document.getElementById('loginError');
-  const btn = document.getElementById('loginBtn');
-  err.textContent = '';
-  err.style.color = '#e74c3c';
-  if (!name || !pw) { err.textContent = 'Please enter both Name and Password.'; return; }
-
-  // Loading state
-  btn.disabled = true;
-  btn.textContent = 'Checking...';
-
-  const url = `${API_BASE}?action=login&name=${encodeURIComponent(name)}&password=${encodeURIComponent(pw)}`;
-  console.log('[HDCRS] Login attempt for:', name);
-  console.log('[HDCRS] Fetching:', url);
-
-  fetch(url)
-    .then(r => {
-      console.log('[HDCRS] Response status:', r.status, r.ok);
-      if (!r.ok) throw new Error('Server returned ' + r.status);
-      return r.json();
-    })
-    .then(d => {
-      console.log('[HDCRS] Server response:', JSON.stringify(d));
-      if (d.success && d.role === 'RE') {
-        sessionStorage.setItem('hdcre_user', name);
-        sessionStorage.setItem('hdcre_role', d.role);
-        showMainApp(name);
-      } else if (d.success && d.role) {
-        err.textContent = 'Access denied — this portal is for Resident Engineers only. Your role is: ' + d.role;
-      } else if (d.success) {
-        err.textContent = 'Login OK but no role assigned. Ask admin to set your Role in Staff_Accounts.';
+  const password = document.getElementById('loginPassword').value;
+  if (!name || !password) {
+    document.getElementById('loginError').textContent = 'Please enter name and password.';
+    return;
+  }
+  document.getElementById('loginError').textContent = 'Logging in...';
+  fetch(API_BASE + '?action=login&name=' + encodeURIComponent(name) + '&password=' + encodeURIComponent(password))
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        sessionStorage.setItem('hdcre_user', data.name);
+        sessionStorage.setItem('hdcre_role', data.role || 'Staff');
+        showMainApp(data.name);
       } else {
-        err.textContent = 'Invalid name or password. Check Staff_Accounts sheet in Google Sheets.';
+        document.getElementById('loginError').textContent = data.error || 'Login failed.';
       }
     })
-    .catch(e => {
-      console.error('[HDCRS] Login error:', e);
-      if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
-        err.textContent = 'Network error — cannot reach server. Check: (1) API_BASE URL in script.js, (2) Apps Script deployed as "Web App" with "Anyone" access.';
-      } else {
-        err.textContent = 'Error: ' + e.message;
-      }
-    })
-    .finally(() => {
-      btn.disabled = false;
-      btn.textContent = 'Login';
+    .catch(() => {
+      document.getElementById('loginError').textContent = 'Network error. Please try again.';
     });
 }
 
@@ -90,229 +88,269 @@ function showMainApp(name) {
   loadSites();
 }
 
-function logout() { sessionStorage.removeItem('hdcre_user'); location.reload(); }
-
-// ========== DATA LOADING ==========
-
-async function loadSites() {
-  try {
-    const res = await fetch(`${API_BASE}?endpoint=sites`);
-    const sites = await res.json();
-    const sel = document.getElementById('siteSelect');
-    sel.innerHTML = '<option value="">-- Select --</option>';
-    sites.forEach(s => {
-      const o = document.createElement('option');
-      o.value = s.name;
-      o.textContent = s.name;
-      sel.appendChild(o);
-    });
-  } catch (e) { console.error(e); }
+function logout() {
+  sessionStorage.clear();
+  location.reload();
 }
 
-async function onSiteChange() {
+// ========== TAB SWITCHING ==========
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('.tab-btn[data-tab="' + tab + '"]').classList.add('active');
+  document.getElementById('tabNewReport').classList.toggle('hidden', tab !== 'new');
+  document.getElementById('tabMyReports').classList.toggle('hidden', tab !== 'myreports');
+  if (tab === 'myreports') loadMyReports();
+}
+
+// ========== LOAD MASTER DATA ==========
+
+function loadSites() {
+  fetch(API_BASE + '?endpoint=sites')
+    .then(r => r.json())
+    .then(data => {
+      if (data.sites) {
+        const sel = document.getElementById('siteSelect');
+        sel.innerHTML = '<option value="">-- Select --</option>';
+        data.sites.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s; opt.textContent = s;
+          sel.appendChild(opt);
+        });
+      }
+    });
+}
+
+function onSiteChange() {
   const site = document.getElementById('siteSelect').value;
   if (!site) return;
-  try {
-    // Load blocks
-    const bRes = await fetch(`${API_BASE}?endpoint=blocks&site=${encodeURIComponent(site)}`);
-    currentBlocks = await bRes.json();
-    renderBlockStatus();
-
-    // Build block option HTML for dropdowns
-    blockOptionsHTML = currentBlocks.map(b =>
-      `<option value="${b.blockId}">${b.blockId} – ${b.blockName}</option>`
-    ).join('');
-
-    // Load tasks (grouped by block)
-    const tRes = await fetch(`${API_BASE}?endpoint=tasks&site=${encodeURIComponent(site)}`);
-    currentTasks = await tRes.json();
-    renderWorkProgress();
-
-    // Load labor types
-    const lRes = await fetch(`${API_BASE}?endpoint=laborTypes&site=${encodeURIComponent(site)}`);
-    currentLaborTypes = await lRes.json();
-    renderWorkforce();
-  } catch (e) { console.error(e); }
+  loadBlocks(site);
+  loadTasks(site);
+  loadLaborTypes(site);
+  loadWorkProgress(site);
+  loadPerformanceRows(site);
 }
 
-// ========== BLOCK STATUS ==========
+function loadBlocks(site) {
+  fetch(API_BASE + '?endpoint=blocks&site=' + encodeURIComponent(site))
+    .then(r => r.json())
+    .then(data => {
+      currentBlocks = data.blocks || [];
+      buildBlockStatusGrid();
+    });
+}
 
-function renderBlockStatus() {
-  const c = document.getElementById('blockStatusContainer');
-  if (currentBlocks.length === 0) {
-    c.innerHTML = '<p class="hint">No blocks configured for this site.</p>';
-    return;
-  }
-  let html = '<div class="block-status-grid">';
+function loadTasks(site) {
+  fetch(API_BASE + '?endpoint=tasks&site=' + encodeURIComponent(site))
+    .then(r => r.json())
+    .then(data => {
+      currentTasks = data.tasks || {};
+      loadWorkProgress(document.getElementById('siteSelect').value);
+    });
+}
+
+function loadLaborTypes(site) {
+  fetch(API_BASE + '?endpoint=laborTypes&site=' + encodeURIComponent(site))
+    .then(r => r.json())
+    .then(data => {
+      currentLaborTypes = data.laborTypes || [];
+      buildWorkforceTable();
+    });
+}
+
+// ========== BLOCK STATUS GRID ==========
+
+function buildBlockStatusGrid() {
+  const container = document.getElementById('blockStatusContainer');
+  container.innerHTML = '';
+  blockOptionsHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'block-status-grid';
   currentBlocks.forEach(b => {
-    html += `<div class="block-status-item">
-      <div class="block-label">${b.blockId} – ${b.blockName}</div>
-      <label>Status <select class="bs-status" data-block="${b.blockId}">
-        <option>Not Active</option><option>On Progress</option><option>Delayed</option><option>On Track</option><option>Completed</option>
-      </select></label>
-    </div>`;
+    blockOptionsHTML += '<option value="' + b.id + '">' + b.name + '</option>';
+    const item = document.createElement('div');
+    item.className = 'block-status-item';
+    item.innerHTML =
+      '<div class="block-label">' + b.name + ' (' + b.id + ')</div>' +
+      '<label>Status <select class="bs-status" data-block="' + b.id + '">' +
+        '<option>On Track</option><option>Delayed</option><option>Critical</option><option>Completed</option><option>Not Started</option>' +
+      '</select></label>' +
+      '<label>Target Achievement % <input type="number" class="bs-target" data-block="' + b.id + '" min="0" max="100" value="0"></label>';
+    grid.appendChild(item);
   });
-  html += '</div>';
-  c.innerHTML = html;
-  renderPerformance();
+  container.appendChild(grid);
 }
 
 // ========== WORK PROGRESS ==========
 
-function renderWorkProgress() {
-  const c = document.getElementById('workProgressContainer');
-  if (currentBlocks.length === 0) {
-    c.innerHTML = '<p class="hint">No blocks configured.</p>';
-    return;
-  }
-  let html = '<table id="taskTable"><thead><tr><th>#</th><th>Block</th><th>Task</th><th>Unit</th><th>Planned</th><th>Executed</th><th>Remarks</th></tr></thead><tbody>';
-  let counter = 0;
-  currentBlocks.forEach((b) => {
-    const blockTasks = currentTasks[b.blockId] || [];
-    if (blockTasks.length > 0) {
-      // Type A: has master schedule
-      blockTasks.forEach(t => {
-        counter++;
-        html += `<tr data-block="${b.blockId}">
-          <td>${counter}</td>
-          <td><select class="task-block" disabled><option value="${b.blockId}" selected>${b.blockId}</option></select></td>
-          <td><select class="task-name"><option value="${t.name}" selected>${t.name}</option></select></td>
-          <td><input type="text" class="task-unit" value="${t.unit || ''}" readonly style="width:60px"></td>
-          <td><input type="number" class="task-planned" step="any" value="${t.dailyPlannedQty || ''}" style="width:70px"></td>
-          <td><input type="number" class="task-executed" step="any" style="width:70px"></td>
-          <td><input type="text" class="task-remark" style="width:100px"></td>
-        </tr>`;
-      });
-    } else {
-      // Type B: free text entry
-      counter++;
-      html += `<tr data-block="${b.blockId}">
-        <td>${counter}</td>
-        <td><select class="task-block">${blockOptionsHTML}</select></td>
-        <td><input type="text" class="task-name-text" placeholder="Task description"></td>
-        <td><input type="text" class="task-unit" placeholder="m3" style="width:60px"></td>
-        <td><input type="number" class="task-planned" step="any" style="width:70px"></td>
-        <td><input type="number" class="task-executed" step="any" style="width:70px"></td>
-        <td><input type="text" class="task-remark" style="width:100px"></td>
-      </tr>`;
+function loadWorkProgress(site) {
+  if (!site || !currentTasks || Object.keys(currentTasks).length === 0) return;
+  const container = document.getElementById('workProgressContainer');
+  container.innerHTML = '';
+  const table = document.createElement('table');
+  table.id = 'wpTable';
+  table.innerHTML = '<thead><tr><th>Block</th><th>Task Name</th><th>Unit</th><th>Planned QTY</th><th>Executed QTY</th><th>Daily %</th><th>Cumulative</th><th>Overall %</th><th>Remarks</th><th></th></tr></thead><tbody></tbody>';
+  const tbody = table.querySelector('tbody');
+  const allBlocks = Object.keys(currentTasks);
+  allBlocks.forEach(block => {
+    (currentTasks[block] || []).forEach(task => {
+      const row = document.createElement('tr');
+      row.innerHTML =
+        '<td><select class="wp-block">' + blockOptionsHTML + '</select></td>' +
+        '<td>' + task.taskName + '</td>' +
+        '<td>' + task.unit + '</td>' +
+        '<td><input type="number" class="wp-planned" value="' + (task.dailyPlanned || 0) + '" min="0"></td>' +
+        '<td><input type="number" class="wp-executed" value="0" min="0"></td>' +
+        '<td class="wp-daily-pct">0%</td>' +
+        '<td><input type="number" class="wp-cumulative" value="0" min="0"></td>' +
+        '<td class="wp-overall-pct">0%</td>' +
+        '<td><input type="text" class="wp-remarks" placeholder="Remarks"></td>' +
+        '<td><button type="button" class="btn-sm remove-row-btn" style="background:var(--danger)">X</button></td>';
+      const sel = row.querySelector('.wp-block');
+      if (sel) sel.value = block;
+      tbody.appendChild(row);
+    });
+  });
+  container.appendChild(table);
+
+  // Auto-calculate
+  table.addEventListener('input', function(e) {
+    const row = e.target.closest('tr');
+    if (!row) return;
+    const planned = parseFloat(row.querySelector('.wp-planned')?.value) || 0;
+    const executed = parseFloat(row.querySelector('.wp-executed')?.value) || 0;
+    const dailyPct = planned > 0 ? Math.round((executed / planned) * 100) : 0;
+    row.querySelector('.wp-daily-pct').textContent = dailyPct + '%';
+
+    const cumulative = parseFloat(row.querySelector('.wp-cumulative')?.value) || 0;
+    const overallPlanned = 0; // placeholder
+    row.querySelector('.wp-overall-pct').textContent = '0%';
+  });
+
+  // Remove row
+  table.addEventListener('click', function(e) {
+    if (e.target.classList.contains('remove-row-btn')) {
+      e.target.closest('tr').remove();
     }
   });
-  html += '</tbody></table>';
-  c.innerHTML = html;
 }
 
 function addGenericRow() {
-  const tbody = document.querySelector('#taskTable tbody');
-  if (!tbody) return;
-  const count = tbody.rows.length + 1;
-  const row = tbody.insertRow();
-  row.innerHTML = `<td>${count}</td>
-    <td><select class="task-block">${blockOptionsHTML}</select></td>
-    <td><input type="text" class="task-name-text" placeholder="Task description"></td>
-    <td><input type="text" class="task-unit" placeholder="m3" style="width:60px"></td>
-    <td><input type="number" class="task-planned" step="any" style="width:70px"></td>
-    <td><input type="number" class="task-executed" step="any" style="width:70px"></td>
-    <td><input type="text" class="task-remark" style="width:100px"></td>`;
+  const table = document.getElementById('wpTable');
+  if (!table) return;
+  const tbody = table.querySelector('tbody');
+  const row = document.createElement('tr');
+  row.innerHTML =
+    '<td><select class="wp-block">' + (blockOptionsHTML || '<option>No blocks loaded</option>') + '</select></td>' +
+    '<td><input type="text" class="wp-taskname" placeholder="Task Name"></td>' +
+    '<td><input type="text" class="wp-unit" placeholder="Unit"></td>' +
+    '<td><input type="number" class="wp-planned" value="0" min="0"></td>' +
+    '<td><input type="number" class="wp-executed" value="0" min="0"></td>' +
+    '<td class="wp-daily-pct">0%</td>' +
+    '<td><input type="number" class="wp-cumulative" value="0" min="0"></td>' +
+    '<td class="wp-overall-pct">0%</td>' +
+    '<td><input type="text" class="wp-remarks" placeholder="Remarks"></td>' +
+    '<td><button type="button" class="btn-sm remove-row-btn" style="background:var(--danger)">X</button></td>';
+  tbody.appendChild(row);
 }
 
-// ========== WORKFORCE ==========
-
-function renderWorkforce() {
-  const tbody = document.querySelector('#workforceTable tbody');
-  tbody.innerHTML = '';
-  currentLaborTypes.forEach(lt => {
-    tbody.innerHTML += `<tr>
-      <td>${lt}</td>
-      <td><input type="number" class="wf-planned" value="0" min="0"></td>
-      <td><input type="number" class="wf-available" value="0" min="0"></td>
-      <td><input type="text" class="wf-comments" placeholder="e.g. Block A & B"></td>
-    </tr>`;
-  });
-  document.querySelectorAll('.wf-planned, .wf-available').forEach(inp => {
-    inp.addEventListener('input', updateWorkforceTotals);
-  });
-}
-
-function updateWorkforceTotals() {
-  let p = 0, a = 0;
-  document.querySelectorAll('.wf-planned').forEach(i => { p += parseInt(i.value) || 0; });
-  document.querySelectorAll('.wf-available').forEach(i => { a += parseInt(i.value) || 0; });
-  document.getElementById('wfPlannedTotal').textContent = p;
-  document.getElementById('wfAvailTotal').textContent = a;
-}
-
-// ========== PERFORMANCE ==========
-
-function renderPerformance() {
-  const c = document.getElementById('performanceContainer');
-  if (currentBlocks.length === 0) return;
-  let html = '<table id="perfTable"><thead><tr><th>Block</th><th>Daily Target Achievement</th><th>Status</th></tr></thead><tbody>';
-  currentBlocks.forEach(b => {
-    html += `<tr>
-      <td>${b.blockId} – ${b.blockName}</td>
-      <td><input type="text" class="perf-achievement" data-block="${b.blockId}" placeholder="e.g. 80%"></td>
-      <td><select class="perf-status" data-block="${b.blockId}">
-        <option>On Track</option><option>Delayed</option><option>Needs Schedule Update</option><option>Completed</option>
-      </select></td>
-    </tr>`;
-  });
-  html += '</tbody></table>';
-  c.innerHTML = html;
-}
-
-// ========== DYNAMIC ROW ADDER ==========
+// ========== DYNAMIC ROWS (reusable) ==========
 
 function addDynamicRow(tableId) {
-  const tbody = document.querySelector(`#${tableId} tbody`);
+  const table = document.getElementById(tableId);
+  if (!table) return;
+  const tbody = table.querySelector('tbody');
   if (!tbody) return;
-  const row = tbody.insertRow();
-  switch (tableId) {
-    case 'equipmentTable':
-      row.innerHTML = `<td><input type="text" placeholder="e.g. Mixer"></td>
-        <td><input type="number" value="1" min="0"></td>
-        <td><select><option>Good</option><option>Fair</option><option>Broken</option><option>Under Repair</option></select></td>
-        <td><input type="text" placeholder="e.g. Block A"></td>`;
-      break;
-    case 'matDeliveredTable': case 'matOnSiteTable':
-      row.innerHTML = `<td><input type="text" placeholder="Description"></td>
-        <td><input type="text" placeholder="m3" style="width:50px"></td>
-        <td><input type="number" step="any"></td>
-        <td><select>${blockOptionsHTML}</select></td>`;
-      break;
-    case 'issuesTable':
-      row.innerHTML = `<td><select>${blockOptionsHTML}</select></td>
-        <td><textarea rows="1" placeholder="Describe the issue..."></textarea></td>`;
-      break;
-    case 'testsTable':
-      row.innerHTML = `<td><input type="text" placeholder="Test name"></td>
-        <td><select>${blockOptionsHTML}</select></td>
-        <td><input type="text" placeholder="Result"></td>`;
-      break;
-    case 'correspondencesTable':
-      row.innerHTML = `<td><input type="date"></td>
-        <td><input type="text" placeholder="From"></td>
-        <td><input type="text" placeholder="To"></td>
-        <td><input type="text" placeholder="Subject"></td>`;
-      break;
-    case 'safetyTable':
-      row.innerHTML = `<td><input type="text" placeholder="Safety issue"></td>
-        <td><select>${blockOptionsHTML}</select></td>
-        <td><input type="text" placeholder="Action taken"></td>`;
-      break;
-    case 'stakeholderTable':
-      row.innerHTML = `<td><input type="text" placeholder="Stakeholder"></td>
-        <td><input type="text" placeholder="Contribution"></td>`;
-      break;
-    case 'siteOrdersTable':
-      row.innerHTML = `<td><input type="text" placeholder="Order No."></td>
-        <td><input type="text" placeholder="Issued To"></td>
-        <td><textarea rows="1" placeholder="Instruction"></textarea></td>
-        <td><input type="date"></td>`;
-      break;
+  const headerRow = table.querySelector('thead tr');
+  if (!headerRow) return;
+  const cells = headerRow.querySelectorAll('th');
+  const row = document.createElement('tr');
+  cells.forEach((th, idx) => {
+    const td = document.createElement('td');
+    if (idx === 0 && (th.textContent.includes('Block'))) {
+      td.innerHTML = '<select>' + (blockOptionsHTML || '<option value="">--</option>') + '</select>';
+    } else if (th.textContent.includes('Qty') || th.textContent.includes('Planned') || th.textContent.includes('Available') || th.textContent.includes('Quantity')) {
+      td.innerHTML = '<input type="number" value="0" min="0" style="width:70px">';
+    } else {
+      td.innerHTML = '<input type="text" placeholder="' + th.textContent + '">';
+    }
+    row.appendChild(td);
+  });
+  // Add remove button
+  const td = document.createElement('td');
+  td.innerHTML = '<button type="button" class="btn-sm remove-row-btn" style="background:var(--danger)">X</button>';
+  row.appendChild(td);
+  tbody.appendChild(row);
+
+  // Recalculate workforce totals
+  if (tableId === 'workforceTable') {
+    row.querySelector('input[type="number"]').addEventListener('input', updateWorkforceTotals);
   }
 }
 
-// ========== PHOTOS with CAPTION/BLOCK META ==========
+// Attach remove-row to all tables via delegation
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('remove-row-btn')) {
+    const row = e.target.closest('tr');
+    if (row) row.remove();
+  }
+});
+
+// ========== WORKFORCE TABLE ==========
+
+function buildWorkforceTable() {
+  const tbody = document.querySelector('#workforceTable tbody');
+  tbody.innerHTML = '';
+  currentLaborTypes.forEach(lt => {
+    const row = document.createElement('tr');
+    row.innerHTML =
+      '<td>' + lt + '</td>' +
+      '<td><input type="number" class="wf-planned" value="0" min="0"></td>' +
+      '<td><input type="number" class="wf-available" value="0" min="0"></td>' +
+      '<td><input type="text" class="wf-comments" placeholder="Block allocation notes"></td>' +
+      '<td><button type="button" class="btn-sm remove-row-btn" style="background:var(--danger)">X</button></td>';
+    row.querySelector('.wf-planned').addEventListener('input', updateWorkforceTotals);
+    row.querySelector('.wf-available').addEventListener('input', updateWorkforceTotals);
+    tbody.appendChild(row);
+  });
+  updateWorkforceTotals();
+}
+
+function updateWorkforceTotals() {
+  let pTotal = 0, aTotal = 0;
+  document.querySelectorAll('#workforceTable .wf-planned').forEach(i => pTotal += parseFloat(i.value) || 0);
+  document.querySelectorAll('#workforceTable .wf-available').forEach(i => aTotal += parseFloat(i.value) || 0);
+  document.getElementById('wfPlannedTotal').textContent = pTotal;
+  document.getElementById('wfAvailTotal').textContent = aTotal;
+}
+
+// ========== PERFORMANCE ROWS ==========
+
+function loadPerformanceRows(site) {
+  const container = document.getElementById('performanceContainer');
+  container.innerHTML = '';
+  if (!currentBlocks.length) {
+    container.innerHTML = '<p class="hint">Select a site first to load performance rows.</p>';
+    return;
+  }
+  const table = document.createElement('table');
+  table.id = 'perfTable';
+  table.innerHTML = '<thead><tr><th>Block</th><th>Daily Target Achievement %</th><th>Status</th></tr></thead><tbody></tbody>';
+  const tbody = table.querySelector('tbody');
+  currentBlocks.forEach(b => {
+    const row = document.createElement('tr');
+    row.innerHTML =
+      '<td>' + b.name + ' (' + b.id + ')</td>' +
+      '<td><input type="number" class="perf-target" data-block="' + b.id + '" min="0" max="100" value="0"></td>' +
+      '<td><select class="perf-status" data-block="' + b.id + '">' +
+        '<option>On Track</option><option>Slightly Delayed</option><option>Significantly Delayed</option><option>Critical</option>' +
+      '</select></td>';
+    tbody.appendChild(row);
+  });
+  container.appendChild(table);
+}
+
+// ========== PHOTOS ==========
 
 function onPhotosSelected(e) {
   const files = e.target.files;
@@ -322,170 +360,470 @@ function onPhotosSelected(e) {
   metaContainer.innerHTML = '';
 
   Array.from(files).forEach((file, idx) => {
-    // Thumbnail preview
-    const reader = new FileReader();
-    reader.onload = ev => {
-      const img = document.createElement('img');
-      img.src = ev.target.result;
-      img.alt = file.name;
-      preview.appendChild(img);
-    };
-    reader.readAsDataURL(file);
+    // Preview
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(file);
+    preview.appendChild(img);
 
-    // Meta row (block + caption)
-    const metaDiv = document.createElement('div');
-    metaDiv.className = 'photo-meta-item';
-    metaDiv.innerHTML = `
-      <img src="" alt="preview" data-photo-idx="${idx}">
-      <div class="meta-fields">
-        <label>Block <select class="photo-block">${blockOptionsHTML || '<option value="">No blocks loaded</option>'}</select></label>
-        <label>Caption <input type="text" class="photo-caption" placeholder="Describe this photo..."></label>
-      </div>
-    `;
-    metaContainer.appendChild(metaDiv);
-
-    // Load thumbnail into meta item
-    const thumbReader = new FileReader();
-    thumbReader.onload = ev => {
-      metaDiv.querySelector(`img[data-photo-idx="${idx}"]`).src = ev.target.result;
-    };
-    thumbReader.readAsDataURL(file);
+    // Meta form
+    const metaItem = document.createElement('div');
+    metaItem.className = 'photo-meta-item';
+    metaItem.innerHTML =
+      '<img src="' + img.src + '">' +
+      '<div class="meta-fields">' +
+        '<label>Block <select class="photo-block">' + (blockOptionsHTML || '<option value="">--</option>') + '</select></label>' +
+        '<label>Caption <input type="text" class="photo-caption" placeholder="Describe this photo"></label>' +
+      '</div>';
+    metaContainer.appendChild(metaItem);
   });
 }
 
-// ========== COLLECT DATA ==========
+// ========== FORM SUBMISSION ==========
 
-function collectBlockStatuses() {
-  return Array.from(document.querySelectorAll('.bs-status')).map(sel => ({
-    blockId: sel.dataset.block,
-    status: sel.value
-  }));
-}
+function handleSubmit(e) {
+  e.preventDefault();
+  const site = document.getElementById('siteSelect').value;
+  if (!site) { showStatus('Please select a site.', 'error'); return; }
 
-function collectTasks() {
-  const rows = document.querySelectorAll('#taskTable tbody tr');
-  const tasks = [];
-  rows.forEach(row => {
-    const blockSel = row.querySelector('.task-block');
-    const taskSel = row.querySelector('.task-name');
-    const taskInput = row.querySelector('.task-name-text');
-    const name = taskSel ? taskSel.value : (taskInput ? taskInput.value : '');
-    const exec = row.querySelector('.task-executed');
-    if (name && exec && exec.value) {
-      tasks.push({
-        blockId: blockSel ? blockSel.value : '',
-        name,
-        unit: row.querySelector('.task-unit') ? row.querySelector('.task-unit').value : '',
-        plannedQty: parseFloat(row.querySelector('.task-planned')?.value) || 0,
-        executedQty: parseFloat(exec.value) || 0,
-        remark: row.querySelector('.task-remark') ? row.querySelector('.task-remark').value : ''
+  const photosInput = document.getElementById('photos');
+  const photoFiles = editingReportId ? [] : Array.from(photosInput.files || []);
+
+  // Collect block statuses
+  const blockStatuses = [];
+  document.querySelectorAll('.block-status-item').forEach(item => {
+    const sel = item.querySelector('.bs-status');
+    const target = item.querySelector('.bs-target');
+    if (sel) {
+      blockStatuses.push({
+        blockName: sel.dataset.block,
+        blockStatus: sel.value,
+        targetAchievement: target ? target.value + '%' : '0%',
+        performanceStatus: getPerformanceStatus(sel.value, target ? parseInt(target.value) : 0)
       });
     }
   });
-  return tasks;
-}
 
-function collectTableData(tableId, fields) {
-  const rows = document.querySelectorAll(`#${tableId} tbody tr`);
-  const data = [];
-  rows.forEach(row => {
-    const cells = row.querySelectorAll('td');
-    const obj = {};
-    fields.forEach((f, i) => {
-      const inp = cells[i]?.querySelector('input, select, textarea');
-      obj[f] = inp ? inp.value : '';
-    });
-    if (Object.values(obj).some(v => v !== '' && v !== '0')) data.push(obj);
+  // Collect work progress
+  const workProgress = [];
+  document.querySelectorAll('#wpTable tbody tr, #workProgressContainer table tbody tr').forEach(row => {
+    const block = row.querySelector('.wp-block')?.value || '';
+    const taskName = row.querySelector('.wp-taskname')?.value || (row.children[1]?.textContent?.trim() || '');
+    const unit = row.querySelector('.wp-unit')?.value || (row.children[2]?.textContent?.trim() || '');
+    const plannedQty = parseFloat(row.querySelector('.wp-planned')?.value) || 0;
+    const executedQty = parseFloat(row.querySelector('.wp-executed')?.value) || 0;
+    const dailyCompletion = plannedQty > 0 ? Math.round((executedQty / plannedQty) * 100) : 0;
+    const cumulative = parseFloat(row.querySelector('.wp-cumulative')?.value) || 0;
+    const remarks = row.querySelector('.wp-remarks')?.value || '';
+    workProgress.push({ block, taskName, unit, plannedQty, executedQty, dailyCompletion, cumulativeExecuted: cumulative, overallCompletion: 0, remarks });
   });
-  return data;
-}
 
-function collectPerformance() {
-  const rows = document.querySelectorAll('#perfTable tbody tr');
-  return Array.from(rows).map(row => ({
-    block: row.querySelector('.perf-achievement')?.dataset.block || '',
-    targetAchievement: row.querySelector('.perf-achievement')?.value || '',
-    status: row.querySelector('.perf-status')?.value || ''
-  }));
-}
+  // Collect workforce
+  const workforce = [];
+  document.querySelectorAll('#workforceTable tbody tr').forEach(row => {
+    const laborType = row.children[0]?.textContent?.trim() || '';
+    const planned = parseFloat(row.querySelector('.wf-planned')?.value) || 0;
+    const available = parseFloat(row.querySelector('.wf-available')?.value) || 0;
+    const comments = row.querySelector('.wf-comments')?.value || '';
+    workforce.push({ laborType, planned, available, comments });
+  });
 
-function collectPhotosWithMeta() {
-  const files = document.getElementById('photos').files;
-  const metaItems = document.querySelectorAll('.photo-meta-item');
-  return Promise.all(Array.from(files).map((file, idx) => new Promise(resolve => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const metaItem = metaItems[idx];
-      resolve({
-        name: file.name,
-        data: e.target.result,
-        block: metaItem ? metaItem.querySelector('.photo-block')?.value || '' : '',
-        caption: metaItem ? metaItem.querySelector('.photo-caption')?.value || '' : ''
+  // Collect equipment
+  const equipment = [];
+  document.querySelectorAll('#equipmentTable tbody tr').forEach(row => {
+    equipment.push({
+      equipmentType: row.children[0]?.querySelector('input')?.value || row.children[0]?.querySelector('select')?.value || '',
+      quantity: parseFloat(row.children[1]?.querySelector('input')?.value) || 0,
+      workingCondition: row.children[2]?.querySelector('input')?.value || row.children[2]?.querySelector('select')?.value || '',
+      comments: row.children[3]?.querySelector('input')?.value || ''
+    });
+  });
+
+  // Collect materials delivered
+  const materialsDelivered = [];
+  document.querySelectorAll('#matDeliveredTable tbody tr').forEach(row => {
+    materialsDelivered.push({
+      description: row.children[0]?.querySelector('input')?.value || '',
+      unit: row.children[1]?.querySelector('input')?.value || '',
+      quantity: parseFloat(row.children[2]?.querySelector('input')?.value) || 0,
+      allocatedBlock: row.children[3]?.querySelector('input')?.value || row.children[3]?.querySelector('select')?.value || ''
+    });
+  });
+
+  // Collect materials on site
+  const materialsOnSite = [];
+  document.querySelectorAll('#matOnSiteTable tbody tr').forEach(row => {
+    materialsOnSite.push({
+      description: row.children[0]?.querySelector('input')?.value || '',
+      unit: row.children[1]?.querySelector('input')?.value || '',
+      quantity: parseFloat(row.children[2]?.querySelector('input')?.value) || 0,
+      allocatedBlock: row.children[3]?.querySelector('input')?.value || row.children[3]?.querySelector('select')?.value || ''
+    });
+  });
+
+  // Collect issues
+  const issues = [];
+  document.querySelectorAll('#issuesTable tbody tr').forEach(row => {
+    issues.push({
+      block: row.children[0]?.querySelector('input')?.value || row.children[0]?.querySelector('select')?.value || '',
+      issueDetails: row.children[1]?.querySelector('input')?.value || ''
+    });
+  });
+
+  // Collect tests
+  const tests = [];
+  document.querySelectorAll('#testsTable tbody tr').forEach(row => {
+    tests.push({
+      test: row.children[0]?.querySelector('input')?.value || '',
+      block: row.children[1]?.querySelector('input')?.value || row.children[1]?.querySelector('select')?.value || '',
+      result: row.children[2]?.querySelector('input')?.value || ''
+    });
+  });
+
+  // Collect correspondences
+  const correspondences = [];
+  document.querySelectorAll('#correspondencesTable tbody tr').forEach(row => {
+    correspondences.push({
+      date: row.children[0]?.querySelector('input')?.value || '',
+      from: row.children[1]?.querySelector('input')?.value || '',
+      to: row.children[2]?.querySelector('input')?.value || '',
+      subject: row.children[3]?.querySelector('input')?.value || ''
+    });
+  });
+
+  // Collect safety
+  const safetyIssues = [];
+  document.querySelectorAll('#safetyTable tbody tr').forEach(row => {
+    safetyIssues.push({
+      issue: row.children[0]?.querySelector('input')?.value || '',
+      block: row.children[1]?.querySelector('input')?.value || row.children[1]?.querySelector('select')?.value || '',
+      actionTaken: row.children[2]?.querySelector('input')?.value || ''
+    });
+  });
+
+  // Collect stakeholders
+  const stakeholders = [];
+  document.querySelectorAll('#stakeholderTable tbody tr').forEach(row => {
+    stakeholders.push({
+      stakeholder: row.children[0]?.querySelector('input')?.value || '',
+      contribution: row.children[1]?.querySelector('input')?.value || ''
+    });
+  });
+
+  // Collect site orders
+  const siteOrders = [];
+  document.querySelectorAll('#siteOrdersTable tbody tr').forEach(row => {
+    siteOrders.push({
+      orderNo: row.children[0]?.querySelector('input')?.value || '',
+      issuedTo: row.children[1]?.querySelector('input')?.value || '',
+      instruction: row.children[2]?.querySelector('input')?.value || '',
+      deadline: row.children[3]?.querySelector('input')?.value || ''
+    });
+  });
+
+  // Collect performance
+  const performance = [];
+  document.querySelectorAll('#perfTable tbody tr').forEach(row => {
+    const target = row.querySelector('.perf-target');
+    const status = row.querySelector('.perf-status');
+    if (target) {
+      performance.push({
+        block: target.dataset.block || '',
+        dailyTargetAchievement: target.value + '%',
+        status: status ? status.value : ''
       });
-    };
-    reader.readAsDataURL(file);
-  })));
-}
+    }
+  });
 
-// ========== SUBMIT ==========
-
-async function handleSubmit(e) {
-  e.preventDefault();
-  const photos = document.getElementById('photos').files;
-  if (photos.length < 3) { alert('Please upload at least 3 photos.'); return; }
-  const status = document.getElementById('status');
-  status.className = '';
-  status.textContent = 'Submitting...';
-
-  const report = {
-    site: document.getElementById('siteSelect').value,
+  // Build payload
+  const payload = {
+    action: 'submitDailyReport',
+    site: site,
     reportDate: document.getElementById('reportDate').value,
     weatherAM: document.getElementById('weatherAM').value,
     weatherPM: document.getElementById('weatherPM').value,
-    reName: document.getElementById('reName').value,
+    residentEngineer: document.getElementById('reName').value,
     activitySummary: document.getElementById('activitySummary').value,
-    blockStatuses: collectBlockStatuses(),
-    tasks: collectTasks(),
-    workforce: collectTableData('workforceTable', ['laborType', 'planned', 'available', 'comments']),
-    equipment: collectTableData('equipmentTable', ['type', 'qty', 'condition', 'comments']),
-    materialsDelivered: collectTableData('matDeliveredTable', ['desc', 'unit', 'qty', 'allocatedBlock']),
-    materialsOnSite: collectTableData('matOnSiteTable', ['desc', 'unit', 'qty', 'allocatedBlock']),
-    issues: collectTableData('issuesTable', ['block', 'details']),
-    tests: collectTableData('testsTable', ['testName', 'block', 'result']),
-    correspondences: collectTableData('correspondencesTable', ['date', 'from', 'to', 'subject']),
-    safetyIssues: collectTableData('safetyTable', ['issue', 'block', 'actionTaken']),
-    stakeholderContribution: collectTableData('stakeholderTable', ['stakeholder', 'contribution']),
     resourceEfficiency: document.getElementById('resourceEfficiency').value,
     recommendations: document.getElementById('recommendations').value,
-    performance: collectPerformance(),
-    siteOrders: collectTableData('siteOrdersTable', ['orderNo', 'issuedTo', 'instruction', 'deadline']),
     holdPointRequests: document.getElementById('holdPointRequests').value,
-    photos: await collectPhotosWithMeta()
+    blockStatuses: blockStatuses,
+    workProgress: workProgress,
+    workforce: workforce,
+    equipment: equipment,
+    materialsDelivered: materialsDelivered,
+    materialsOnSite: materialsOnSite,
+    issues: issues,
+    tests: tests,
+    correspondences: correspondences,
+    safetyIssues: safetyIssues,
+    stakeholders: stakeholders,
+    siteOrders: siteOrders,
+    performance: performance,
+    photos: []
   };
 
-  try {
-    const res = await fetch(API_BASE, {
-      method: 'POST',
-      body: JSON.stringify({ action: 'submitReport', report })
+  // Upload photos first if any
+  if (photoFiles.length > 0) {
+    showStatus('Uploading photos...', 'success');
+    const photoPromises = photoFiles.map((file, idx) => {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          const block = document.querySelectorAll('.photo-block')[idx]?.value || '';
+          const caption = document.querySelectorAll('.photo-caption')[idx]?.value || '';
+          payload.photos.push({
+            data: e.target.result.split(',')[1],
+            mimeType: file.type,
+            fileName: file.name,
+            block: block,
+            caption: caption
+          });
+          resolve();
+        };
+        reader.readAsDataURL(file);
+      });
     });
-    const result = await res.json();
-    if (result.success) {
-      status.className = 'success';
-      status.textContent = 'Report submitted successfully! Pending Director review. ID: ' + result.reportId;
-      document.getElementById('dailyForm').reset();
-      document.getElementById('reportDate').valueAsDate = new Date();
-      document.getElementById('reName').value = sessionStorage.getItem('hdcre_user') || '';
-      document.getElementById('photoPreview').innerHTML = '';
-      document.getElementById('photoMetaContainer').innerHTML = '';
-      document.getElementById('blockStatusContainer').innerHTML = '<p class="hint">Select a site first to load blocks.</p>';
-      document.getElementById('workProgressContainer').innerHTML = '<p class="hint">Select a site first to load blocks.</p>';
-      document.getElementById('performanceContainer').innerHTML = '<p class="hint">Performance rows load with block statuses.</p>';
-    } else {
-      status.className = 'error';
-      status.textContent = 'Error: ' + (result.message || 'Unknown');
-    }
-  } catch (err) {
-    status.className = 'error';
-    status.textContent = 'Submission failed. Check connection.';
+    Promise.all(photoPromises).then(() => {
+      sendReport(payload);
+    });
+  } else {
+    sendReport(payload);
   }
+}
+
+function sendReport(payload) {
+  showStatus('Submitting report...', 'success');
+  fetch(API_BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify(payload)
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        showStatus('Report submitted successfully! ID: ' + data.reportId, 'success');
+        clearDraft();
+        if (!editingReportId) {
+          document.getElementById('dailyForm').reset();
+          document.getElementById('reportDate').valueAsDate = new Date();
+          document.getElementById('reName').value = sessionStorage.getItem('hdcre_user') || '';
+          document.getElementById('blockStatusContainer').innerHTML = '';
+          document.getElementById('workProgressContainer').innerHTML = '<p class="hint">Select a site first to load blocks and scheduled tasks.</p>';
+          document.getElementById('performanceContainer').innerHTML = '<p class="hint">Performance rows load with block statuses.</p>';
+          document.getElementById('photoPreview').innerHTML = '';
+          document.getElementById('photoMetaContainer').innerHTML = '';
+        }
+        editingReportId = null;
+        document.getElementById('editModeBanner').classList.add('hidden');
+        document.getElementById('cancelEditBtn').classList.add('hidden');
+        document.getElementById('submitBtn').textContent = 'Submit Daily Report';
+      } else {
+        showStatus('Error: ' + (data.error || 'Submission failed.'), 'error');
+      }
+    })
+    .catch(() => {
+      showStatus('Network error. Please try again.', 'error');
+    });
+}
+
+function getPerformanceStatus(status, target) {
+  if (status === 'Completed') return 'Completed';
+  if (status === 'Critical' || target < 50) return 'Critical';
+  if (status === 'Delayed' || target < 80) return 'Delayed';
+  return 'On Track';
+}
+
+function showStatus(msg, type) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = type;
+}
+
+// ========== MY REPORTS ==========
+
+function loadMyReports() {
+  const user = sessionStorage.getItem('hdcre_user');
+  const container = document.getElementById('myReportsContent');
+  container.innerHTML = '<p class="hint">Loading reports...</p>';
+  fetch(API_BASE + '?endpoint=reports')
+    .then(r => r.json())
+    .then(data => {
+      allReports = (data.reports || []).filter(r => r.residentEngineer === user);
+      if (allReports.length === 0) {
+        container.innerHTML = '<p class="hint">No reports found for your account.</p>';
+        return;
+      }
+      let html = '<table class="reports-list-table"><thead><tr><th>Date</th><th>Site</th><th>Status</th><th>ID</th><th>Actions</th></tr></thead><tbody>';
+      allReports.forEach(r => {
+        html += '<tr>' +
+          '<td>' + r.reportDate + '</td>' +
+          '<td>' + r.site + '</td>' +
+          '<td><span class="badge ' + r.approvalStatus + '">' + r.approvalStatus + '</span></td>' +
+          '<td>' + r.reportId + '</td>' +
+          '<td><button class="btn-sm view-report-btn" data-id="' + r.reportId + '">View</button></td>' +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+      container.innerHTML = html;
+
+      // View buttons
+      container.querySelectorAll('.view-report-btn').forEach(btn => {
+        btn.addEventListener('click', () => viewReport(btn.dataset.id));
+      });
+    });
+}
+
+function viewReport(reportId) {
+  const modal = document.getElementById('reportViewModal');
+  const content = document.getElementById('reportViewContent');
+  content.innerHTML = '<p class="hint">Loading report...</p>';
+  modal.classList.remove('hidden');
+
+  fetch(API_BASE + '?endpoint=reportDetail&reportId=' + encodeURIComponent(reportId))
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        content.innerHTML = '<p style="color:var(--danger)">' + data.error + '</p>';
+        return;
+      }
+      let html = '';
+      html += '<div class="detail-section"><h4>Report Info</h4>';
+      html += '<div class="meta-grid">';
+      html += '<span class="label">ID:</span><span>' + data.reportId + '</span>';
+      html += '<span class="label">Date:</span><span>' + data.reportDate + '</span>';
+      html += '<span class="label">Site:</span><span>' + data.site + '</span>';
+      html += '<span class="label">RE:</span><span>' + data.residentEngineer + '</span>';
+      html += '<span class="label">Weather:</span><span>' + data.weatherAM + ' / ' + data.weatherPM + '</span>';
+      html += '<span class="label">Status:</span><span class="badge ' + data.approvalStatus + '">' + data.approvalStatus + '</span>';
+      html += '</div></div>';
+
+      html += '<div class="detail-section"><h4>Activity Summary</h4><p>' + (data.activitySummary || 'N/A') + '</p></div>';
+
+      if (data.blockStatuses && data.blockStatuses.length) {
+        html += '<div class="detail-section"><h4>Block Status</h4><table><tr><th>Block</th><th>Status</th><th>Target</th></tr>';
+        data.blockStatuses.forEach(b => { html += '<tr><td>' + b.blockName + '</td><td>' + b.blockStatus + '</td><td>' + b.targetAchievement + '</td></tr>'; });
+        html += '</table></div>';
+      }
+
+      if (data.workProgress && data.workProgress.length) {
+        html += '<div class="detail-section"><h4>Work Progress</h4><table><tr><th>Block</th><th>Task</th><th>Planned</th><th>Executed</th><th>Daily %</th></tr>';
+        data.workProgress.forEach(w => { html += '<tr><td>' + w.block + '</td><td>' + w.taskName + '</td><td>' + w.plannedQty + '</td><td>' + w.executedQty + '</td><td>' + w.dailyCompletion + '%</td></tr>'; });
+        html += '</table></div>';
+      }
+
+      if (data.workforce && data.workforce.length) {
+        html += '<div class="detail-section"><h4>Workforce</h4><table><tr><th>Type</th><th>Planned</th><th>Available</th></tr>';
+        data.workforce.forEach(w => { html += '<tr><td>' + w.laborType + '</td><td>' + w.planned + '</td><td>' + w.available + '</td></tr>'; });
+        html += '</table></div>';
+      }
+
+      if (data.equipment && data.equipment.length) {
+        html += '<div class="detail-section"><h4>Equipment</h4><table><tr><th>Type</th><th>Qty</th><th>Condition</th></tr>';
+        data.equipment.forEach(e => { html += '<tr><td>' + e.equipmentType + '</td><td>' + e.quantity + '</td><td>' + e.workingCondition + '</td></tr>'; });
+        html += '</table></div>';
+      }
+
+      if (data.materials && data.materials.length) {
+        html += '<div class="detail-section"><h4>Materials</h4><table><tr><th>Desc</th><th>Unit</th><th>Qty</th><th>Type</th><th>Block</th></tr>';
+        data.materials.forEach(m => { html += '<tr><td>' + m.description + '</td><td>' + m.unit + '</td><td>' + m.quantity + '</td><td>' + m.type + '</td><td>' + m.allocatedBlock + '</td></tr>'; });
+        html += '</table></div>';
+      }
+
+      if (data.issues && data.issues.length) {
+        html += '<div class="detail-section"><h4>Issues</h4><table><tr><th>Block</th><th>Details</th></tr>';
+        data.issues.forEach(i => { html += '<tr><td>' + i.block + '</td><td>' + i.issueDetails + '</td></tr>'; });
+        html += '</table></div>';
+      }
+
+      if (data.performance && data.performance.length) {
+        html += '<div class="detail-section"><h4>Performance</h4><table><tr><th>Block</th><th>Target</th><th>Status</th></tr>';
+        data.performance.forEach(p => { html += '<tr><td>' + p.block + '</td><td>' + p.dailyTargetAchievement + '</td><td>' + p.status + '</td></tr>'; });
+        html += '</table>';
+        html += '<p><strong>Efficiency:</strong> ' + (data.resourceEfficiency || 'N/A') + '</p>';
+        html += '<p><strong>Recommendations:</strong> ' + (data.recommendations || 'N/A') + '</p>';
+        html += '</div>';
+      }
+
+      if (data.photos && data.photos.length) {
+        html += '<div class="detail-section"><h4>Photos</h4><div class="photo-grid">';
+        data.photos.forEach(p => {
+          if (p.photoUrl) html += '<div><img src="' + p.photoUrl + '" alt="' + (p.caption || '') + '"><br><small>' + (p.caption || '') + ' - ' + (p.block || '') + '</small></div>';
+        });
+        html += '</div></div>';
+      }
+
+      if (data.directorComments) {
+        html += '<div class="detail-section"><h4>Director Comments</h4><p>' + data.directorComments + '</p></div>';
+      }
+
+      content.innerHTML = html;
+    });
+}
+
+// ========== EDIT REPORT ==========
+
+function cancelEdit() {
+  editingReportId = null;
+  document.getElementById('dailyForm').reset();
+  document.getElementById('reportDate').valueAsDate = new Date();
+  document.getElementById('reName').value = sessionStorage.getItem('hdcre_user') || '';
+  document.getElementById('editModeBanner').classList.add('hidden');
+  document.getElementById('cancelEditBtn').classList.add('hidden');
+  document.getElementById('submitBtn').textContent = 'Submit Daily Report';
+  document.getElementById('photoSectionNote').classList.add('hidden');
+}
+
+// ========== DRAFT ==========
+
+function saveDraft() {
+  const site = document.getElementById('siteSelect').value;
+  if (!site) return;
+  try {
+    const formData = {
+      weatherAM: document.getElementById('weatherAM').value,
+      weatherPM: document.getElementById('weatherPM').value,
+      activitySummary: document.getElementById('activitySummary').value,
+      resourceEfficiency: document.getElementById('resourceEfficiency').value,
+      recommendations: document.getElementById('recommendations').value,
+      holdPointRequests: document.getElementById('holdPointRequests').value
+    };
+    const key = 'hdcre_draft_' + site + '_' + document.getElementById('reportDate').value;
+    localStorage.setItem(key, JSON.stringify(formData));
+    localStorage.setItem('hdcre_draft_key', key);
+  } catch (e) {}
+}
+
+function checkForDraft() {
+  try {
+    const key = localStorage.getItem('hdcre_draft_key');
+    if (!key) return;
+    const data = JSON.parse(localStorage.getItem(key));
+    if (!data) return;
+    const banner = document.getElementById('draftBanner');
+    banner.innerHTML = 'Draft found for ' + key.replace('hdcre_draft_', '') + '. <a href="#" id="restoreDraft">Click to restore</a> or <a href="#" id="clearDraft">dismiss</a>.';
+    banner.classList.remove('hidden');
+    document.getElementById('restoreDraft').addEventListener('click', function(e) {
+      e.preventDefault();
+      if (data.weatherAM) document.getElementById('weatherAM').value = data.weatherAM;
+      if (data.weatherPM) document.getElementById('weatherPM').value = data.weatherPM;
+      if (data.activitySummary) document.getElementById('activitySummary').value = data.activitySummary;
+      if (data.resourceEfficiency) document.getElementById('resourceEfficiency').value = data.resourceEfficiency;
+      if (data.recommendations) document.getElementById('recommendations').value = data.recommendations;
+      if (data.holdPointRequests) document.getElementById('holdPointRequests').value = data.holdPointRequests;
+      banner.classList.add('hidden');
+    });
+    document.getElementById('clearDraft').addEventListener('click', function(e) {
+      e.preventDefault();
+      clearDraft();
+      banner.classList.add('hidden');
+    });
+  } catch (e) {}
+}
+
+function clearDraft() {
+  try {
+    const key = localStorage.getItem('hdcre_draft_key');
+    if (key) localStorage.removeItem(key);
+    localStorage.removeItem('hdcre_draft_key');
+  } catch (e) {}
 }
