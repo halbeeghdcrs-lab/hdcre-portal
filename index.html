@@ -1,3 +1,4 @@
+<!-- Version 4.1 -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -32,188 +33,220 @@
       </p>
     </header>
 
-    <form id="dailyForm">
-      <!-- 1. BASIC INFORMATION -->
-      <fieldset>
-        <legend>1. Basic Information</legend>
-        <div class="form-row">
-          <label>Site Name <select id="siteSelect" required><option value="">-- Select --</option></select></label>
-          <label>Report Date <input type="date" id="reportDate" required></label>
-        </div>
-        <div class="form-row three-col">
-          <label>Weather AM
-            <select id="weatherAM">
-              <option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Dusty</option><option>Foggy</option><option>Windy</option><option>Other</option>
+    <!-- Tab Bar -->
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="new">New Report</button>
+      <button class="tab-btn" data-tab="myreports">My Reports</button>
+    </div>
+
+    <!-- Edit Mode Banner -->
+    <div id="editModeBanner" class="edit-mode-banner hidden"></div>
+
+    <!-- Draft Restore Banner -->
+    <div id="draftBanner" class="draft-banner hidden"></div>
+
+    <!-- TAB: New Report -->
+    <div id="tabNewReport">
+      <form id="dailyForm">
+        <!-- 1. BASIC INFORMATION -->
+        <fieldset>
+          <legend>1. Basic Information</legend>
+          <div class="form-row">
+            <label>Site Name <select id="siteSelect" required><option value="">-- Select --</option></select></label>
+            <label>Report Date <input type="date" id="reportDate" required></label>
+          </div>
+          <div class="form-row three-col">
+            <label>Weather AM
+              <select id="weatherAM">
+                <option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Dusty</option><option>Foggy</option><option>Windy</option><option>Other</option>
+              </select>
+            </label>
+            <label>Weather PM
+              <select id="weatherPM">
+                <option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Dusty</option><option>Foggy</option><option>Windy</option><option>Other</option>
+              </select>
+            </label>
+            <label>Resident Engineer <input type="text" id="reName" required readonly></label>
+          </div>
+          <label>Contractor Activity Summary <textarea id="activitySummary" rows="2" required></textarea></label>
+        </fieldset>
+
+        <!-- 2. BLOCK STATUS OVERVIEW -->
+        <fieldset>
+          <legend>2. Block Status Overview</legend>
+          <p class="hint">Set the current status for each block. Performance details go to Section 13.</p>
+          <div id="blockStatusContainer"></div>
+        </fieldset>
+
+        <!-- 3. BLOCK-WISE WORK PROGRESS -->
+        <fieldset>
+          <legend>3. Block-Wise Work Progress</legend>
+          <div id="workProgressContainer">
+            <p class="hint">Select a site first to load blocks and scheduled tasks.</p>
+          </div>
+          <button type="button" id="addTaskRow" class="btn-sm">+ Add Task Row</button>
+        </fieldset>
+
+        <!-- 4. WORKFORCE AVAILABILITY -->
+        <fieldset>
+          <legend>4. Workforce Availability</legend>
+          <p class="hint">Project-wide workforce tracking. Use Comments for block allocation notes.</p>
+          <table id="workforceTable">
+            <thead><tr><th>Labor Type</th><th>Planned</th><th>Available</th><th>Comments / Allocation</th></tr></thead>
+            <tbody></tbody>
+            <tfoot><tr class="total-row"><td><strong>Total</strong></td><td id="wfPlannedTotal">0</td><td id="wfAvailTotal">0</td><td></td></tr></tfoot>
+          </table>
+        </fieldset>
+
+        <!-- 5. EQUIPMENT AVAILABILITY -->
+        <fieldset>
+          <legend>5. Equipment Availability</legend>
+          <p class="hint">Project-wide equipment tracking. Use Comments for block allocation notes.</p>
+          <table id="equipmentTable">
+            <thead><tr><th>Equipment Type</th><th>Qty</th><th>Condition</th><th>Comments / Allocation</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <button type="button" class="btn-sm add-row-btn" data-target="equipmentTable">+ Add Equipment</button>
+        </fieldset>
+
+        <!-- 6. MATERIALS DELIVERED TODAY -->
+        <fieldset>
+          <legend>6. Materials Delivered Today</legend>
+          <table id="matDeliveredTable">
+            <thead><tr><th>Description</th><th>Unit</th><th>Qty</th><th>Allocated Block</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <button type="button" class="btn-sm add-row-btn" data-target="matDeliveredTable">+ Add Material</button>
+        </fieldset>
+
+        <!-- 7. MATERIALS ON SITE -->
+        <fieldset>
+          <legend>7. Materials Available On Site</legend>
+          <table id="matOnSiteTable">
+            <thead><tr><th>Description</th><th>Unit</th><th>Qty</th><th>Allocated Block</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <button type="button" class="btn-sm add-row-btn" data-target="matOnSiteTable">+ Add Material</button>
+        </fieldset>
+
+        <!-- 8. SITE CHALLENGES, ISSUES & DELAYS -->
+        <fieldset>
+          <legend>8. Site Challenges, Issues &amp; Delays</legend>
+          <table id="issuesTable">
+            <thead><tr><th>Block</th><th>Issue / Delay Details</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <button type="button" class="btn-sm add-row-btn" data-target="issuesTable">+ Add Issue</button>
+        </fieldset>
+
+        <!-- 9. TESTS CONDUCTED -->
+        <fieldset>
+          <legend>9. Tests Conducted</legend>
+          <table id="testsTable">
+            <thead><tr><th>Test</th><th>Block</th><th>Result</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <button type="button" class="btn-sm add-row-btn" data-target="testsTable">+ Add Test</button>
+        </fieldset>
+
+        <!-- 10. CORRESPONDENCES -->
+        <fieldset>
+          <legend>10. Correspondences</legend>
+          <table id="correspondencesTable">
+            <thead><tr><th>Date</th><th>From</th><th>To</th><th>Subject</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <button type="button" class="btn-sm add-row-btn" data-target="correspondencesTable">+ Add Correspondence</button>
+        </fieldset>
+
+        <!-- 11. SAFETY ISSUES -->
+        <fieldset>
+          <legend>11. Safety Issues</legend>
+          <table id="safetyTable">
+            <thead><tr><th>Issue</th><th>Block</th><th>Action Taken</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <button type="button" class="btn-sm add-row-btn" data-target="safetyTable">+ Add Safety Issue</button>
+        </fieldset>
+
+        <!-- 12. STAKEHOLDER CONTRIBUTION -->
+        <fieldset>
+          <legend>12. Stakeholder Contribution</legend>
+          <table id="stakeholderTable">
+            <thead><tr><th>Stakeholder</th><th>Contribution</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <button type="button" class="btn-sm add-row-btn" data-target="stakeholderTable">+ Add</button>
+        </fieldset>
+
+        <!-- 13. PERFORMANCE ANALYSIS & MONITORING -->
+        <fieldset class="performance-fieldset">
+          <legend>13. Performance Analysis &amp; Monitoring</legend>
+          <label>Overall Resource Efficiency Rating
+            <select id="resourceEfficiency">
+              <option value="">-- Select --</option>
+              <option>Excellent</option><option>Good</option><option>Fair</option><option>Poor</option>
             </select>
           </label>
-          <label>Weather PM
-            <select id="weatherPM">
-              <option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Dusty</option><option>Foggy</option><option>Windy</option><option>Other</option>
-            </select>
-          </label>
-          <label>Resident Engineer <input type="text" id="reName" required readonly></label>
-        </div>
-        <label>Contractor Activity Summary <textarea id="activitySummary" rows="2" required></textarea></label>
-      </fieldset>
+          <div id="performanceContainer">
+            <p class="hint">Performance rows load with block statuses.</p>
+          </div>
+          <label>Recommendations <textarea id="recommendations" rows="3" placeholder="1. ...&#10;2. ..."></textarea></label>
+        </fieldset>
 
-      <!-- 2. BLOCK STATUS OVERVIEW -->
-      <fieldset>
-        <legend>2. Block Status Overview</legend>
-        <p class="hint">Set the current status for each block. Performance details go to Section 13.</p>
-        <div id="blockStatusContainer"></div>
-      </fieldset>
+        <!-- 14. SITE ORDERS (Instructions Issued) -->
+        <fieldset>
+          <legend>14. Site Orders (Instructions Issued)</legend>
+          <table id="siteOrdersTable">
+            <thead><tr><th>Order No.</th><th>Issued To</th><th>Instruction</th><th>Deadline</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <button type="button" class="btn-sm add-row-btn" data-target="siteOrdersTable">+ Add Order</button>
+        </fieldset>
 
-      <!-- 3. BLOCK-WISE WORK PROGRESS -->
-      <fieldset>
-        <legend>3. Block-Wise Work Progress</legend>
-        <div id="workProgressContainer">
-          <p class="hint">Select a site first to load blocks and scheduled tasks.</p>
-        </div>
-        <button type="button" id="addTaskRow" class="btn-sm">+ Add Task Row</button>
-      </fieldset>
+        <!-- 15. HOLD POINT REQUESTS -->
+        <fieldset>
+          <legend>15. Hold-Point Requests</legend>
+          <p class="hint">List any works requiring inspection before proceeding (SOP 03 Field 9).</p>
+          <textarea id="holdPointRequests" rows="2" placeholder="List any works requiring inspection before proceeding..."></textarea>
+        </fieldset>
 
-      <!-- 4. WORKFORCE AVAILABILITY -->
-      <fieldset>
-        <legend>4. Workforce Availability</legend>
-        <p class="hint">Project-wide workforce tracking. Use Comments for block allocation notes.</p>
-        <table id="workforceTable">
-          <thead><tr><th>Labor Type</th><th>Planned</th><th>Available</th><th>Comments / Allocation</th></tr></thead>
-          <tbody></tbody>
-          <tfoot><tr class="total-row"><td><strong>Total</strong></td><td id="wfPlannedTotal">0</td><td id="wfAvailTotal">0</td><td></td></tr></tfoot>
-        </table>
-      </fieldset>
+        <!-- 16. SITE PHOTOS -->
+        <fieldset id="photoSection">
+          <legend>16. Site Photos (min 3)</legend>
+          <div id="photoPreview" class="photo-preview"></div>
+          <input type="file" id="photos" multiple accept="image/*" required>
+          <p id="photoSectionNote" class="hint hidden" style="color:#E65100;font-weight:600">Photos cannot be changed during edit. Submit a new report to update photos.</p>
+          <p class="hint">Upload at least 3 photos (JPEG/PNG). After selecting, assign each photo a Block and Caption below.</p>
+          <div id="photoMetaContainer"></div>
+        </fieldset>
 
-      <!-- 5. EQUIPMENT AVAILABILITY -->
-      <fieldset>
-        <legend>5. Equipment Availability</legend>
-        <p class="hint">Project-wide equipment tracking. Use Comments for block allocation notes.</p>
-        <table id="equipmentTable">
-          <thead><tr><th>Equipment Type</th><th>Qty</th><th>Condition</th><th>Comments / Allocation</th></tr></thead>
-          <tbody></tbody>
-        </table>
-        <button type="button" class="btn-sm add-row-btn" data-target="equipmentTable">+ Add Equipment</button>
-      </fieldset>
+        <!-- 17. CONFIRMATION -->
+        <fieldset>
+          <legend>Confirmation</legend>
+          <label class="checkbox-label"><input type="checkbox" id="confirm" required> I confirm the above information is correct and complete to the best of my knowledge.</label>
+        </fieldset>
 
-      <!-- 6. MATERIALS DELIVERED TODAY -->
-      <fieldset>
-        <legend>6. Materials Delivered Today</legend>
-        <table id="matDeliveredTable">
-          <thead><tr><th>Description</th><th>Unit</th><th>Qty</th><th>Allocated Block</th></tr></thead>
-          <tbody></tbody>
-        </table>
-        <button type="button" class="btn-sm add-row-btn" data-target="matDeliveredTable">+ Add Material</button>
-      </fieldset>
+        <button type="button" id="cancelEditBtn" class="cancel-btn hidden">Cancel Edit</button>
+        <button type="submit" id="submitBtn" class="submit-btn">Submit Daily Report</button>
+      </form>
+      <div id="status"></div>
+    </div>
 
-      <!-- 7. MATERIALS ON SITE -->
-      <fieldset>
-        <legend>7. Materials Available On Site</legend>
-        <table id="matOnSiteTable">
-          <thead><tr><th>Description</th><th>Unit</th><th>Qty</th><th>Allocated Block</th></tr></thead>
-          <tbody></tbody>
-        </table>
-        <button type="button" class="btn-sm add-row-btn" data-target="matOnSiteTable">+ Add Material</button>
-      </fieldset>
+    <!-- TAB: My Reports -->
+    <div id="tabMyReports" class="hidden">
+      <div id="myReportsContent" class="my-reports-section">
+        <p class="hint">Click "My Reports" to load your submitted reports.</p>
+      </div>
+    </div>
 
-      <!-- 8. SITE CHALLENGES, ISSUES & DELAYS -->
-      <fieldset>
-        <legend>8. Site Challenges, Issues &amp; Delays</legend>
-        <table id="issuesTable">
-          <thead><tr><th>Block</th><th>Issue / Delay Details</th></tr></thead>
-          <tbody></tbody>
-        </table>
-        <button type="button" class="btn-sm add-row-btn" data-target="issuesTable">+ Add Issue</button>
-      </fieldset>
-
-      <!-- 9. TESTS CONDUCTED -->
-      <fieldset>
-        <legend>9. Tests Conducted</legend>
-        <table id="testsTable">
-          <thead><tr><th>Test</th><th>Block</th><th>Result</th></tr></thead>
-          <tbody></tbody>
-        </table>
-        <button type="button" class="btn-sm add-row-btn" data-target="testsTable">+ Add Test</button>
-      </fieldset>
-
-      <!-- 10. CORRESPONDENCES -->
-      <fieldset>
-        <legend>10. Correspondences</legend>
-        <table id="correspondencesTable">
-          <thead><tr><th>Date</th><th>From</th><th>To</th><th>Subject</th></tr></thead>
-          <tbody></tbody>
-        </table>
-        <button type="button" class="btn-sm add-row-btn" data-target="correspondencesTable">+ Add Correspondence</button>
-      </fieldset>
-
-      <!-- 11. SAFETY ISSUES -->
-      <fieldset>
-        <legend>11. Safety Issues</legend>
-        <table id="safetyTable">
-          <thead><tr><th>Issue</th><th>Block</th><th>Action Taken</th></tr></thead>
-          <tbody></tbody>
-        </table>
-        <button type="button" class="btn-sm add-row-btn" data-target="safetyTable">+ Add Safety Issue</button>
-      </fieldset>
-
-      <!-- 12. STAKEHOLDER CONTRIBUTION -->
-      <fieldset>
-        <legend>12. Stakeholder Contribution</legend>
-        <table id="stakeholderTable">
-          <thead><tr><th>Stakeholder</th><th>Contribution</th></tr></thead>
-          <tbody></tbody>
-        </table>
-        <button type="button" class="btn-sm add-row-btn" data-target="stakeholderTable">+ Add</button>
-      </fieldset>
-
-      <!-- 13. PERFORMANCE ANALYSIS & MONITORING -->
-      <fieldset class="performance-fieldset">
-        <legend>13. Performance Analysis &amp; Monitoring</legend>
-        <label>Overall Resource Efficiency Rating
-          <select id="resourceEfficiency">
-            <option value="">-- Select --</option>
-            <option>Excellent</option><option>Good</option><option>Fair</option><option>Poor</option>
-          </select>
-        </label>
-        <div id="performanceContainer">
-          <p class="hint">Performance rows load with block statuses.</p>
-        </div>
-        <label>Recommendations <textarea id="recommendations" rows="3" placeholder="1. ...&#10;2. ..."></textarea></label>
-      </fieldset>
-
-      <!-- 14. SITE ORDERS (Instructions Issued) -->
-      <fieldset>
-        <legend>14. Site Orders (Instructions Issued)</legend>
-        <table id="siteOrdersTable">
-          <thead><tr><th>Order No.</th><th>Issued To</th><th>Instruction</th><th>Deadline</th></tr></thead>
-          <tbody></tbody>
-        </table>
-        <button type="button" class="btn-sm add-row-btn" data-target="siteOrdersTable">+ Add Order</button>
-      </fieldset>
-
-      <!-- 15. HOLD POINT REQUESTS -->
-      <fieldset>
-        <legend>15. Hold-Point Requests</legend>
-        <p class="hint">List any works requiring inspection before proceeding (SOP 03 Field 9).</p>
-        <textarea id="holdPointRequests" rows="2" placeholder="List any works requiring inspection before proceeding..."></textarea>
-      </fieldset>
-
-      <!-- 16. SITE PHOTOS -->
-      <fieldset>
-        <legend>16. Site Photos (min 3)</legend>
-        <div id="photoPreview" class="photo-preview"></div>
-        <input type="file" id="photos" multiple accept="image/*" required>
-        <p class="hint">Upload at least 3 photos (JPEG/PNG). After selecting, assign each photo a Block and Caption below.</p>
-        <div id="photoMetaContainer"></div>
-      </fieldset>
-
-      <!-- 17. CONFIRMATION -->
-      <fieldset>
-        <legend>Confirmation</legend>
-        <label class="checkbox-label"><input type="checkbox" id="confirm" required> I confirm the above information is correct and complete to the best of my knowledge.</label>
-      </fieldset>
-
-      <button type="submit" id="submitBtn" class="submit-btn">Submit Daily Report</button>
-    </form>
-    <div id="status"></div>
+    <!-- Report View Modal -->
+    <div id="reportViewModal" class="modal-overlay hidden">
+      <div class="modal-content">
+        <button class="modal-close" id="closeViewBtn">X</button>
+        <div id="reportViewContent"></div>
+      </div>
+    </div>
   </div>
 
   <script src="script.js"></script>
