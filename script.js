@@ -39,44 +39,60 @@ document.addEventListener('DOMContentLoaded', () => {
   // Draft auto-save every 30 seconds
   draftTimer = setInterval(saveDraft, 30000);
 
-  // Check for draft on load
-  checkForDraft();
+  // Save draft on any form input
+  document.getElementById('dailyForm').addEventListener('input', saveDraft);
 
-  // Cancel edit
+  // Modal close button
+  document.getElementById('closeViewBtn').addEventListener('click', closeReportView);
+
+  // Cancel edit button
   document.getElementById('cancelEditBtn').addEventListener('click', cancelEdit);
-
-  // Modal close
-  document.getElementById('closeViewBtn').addEventListener('click', () => {
-    document.getElementById('reportViewModal').classList.add('hidden');
-  });
-  document.getElementById('reportViewModal').addEventListener('click', function(e) {
-    if (e.target === this) this.classList.add('hidden');
-  });
 });
 
 // ========== LOGIN ==========
 
 function attemptLogin() {
   const name = document.getElementById('loginName').value.trim();
-  const password = document.getElementById('loginPassword').value;
-  if (!name || !password) {
-    document.getElementById('loginError').textContent = 'Please enter name and password.';
-    return;
-  }
-  document.getElementById('loginError').textContent = 'Logging in...';
-  fetch(API_BASE + '?action=login&name=' + encodeURIComponent(name) + '&password=' + encodeURIComponent(password))
-    .then(r => r.json())
-    .then(data => {
-      if (data.success) {
-        sessionStorage.setItem('hdcre_user', data.name);
-        sessionStorage.setItem('hdcre_role', data.role || 'Staff');
-        showMainApp(data.name);
+  const pw = document.getElementById('loginPassword').value.trim();
+  const err = document.getElementById('loginError');
+  const btn = document.getElementById('loginBtn');
+  err.textContent = '';
+  err.style.color = '#e74c3c';
+  if (!name || !pw) { err.textContent = 'Please enter both Name and Password.'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Checking...';
+
+  const url = API_BASE + '?action=login&name=' + encodeURIComponent(name) + '&password=' + encodeURIComponent(pw);
+
+  fetch(url)
+    .then(r => {
+      if (!r.ok) throw new Error('Server returned ' + r.status);
+      return r.json();
+    })
+    .then(d => {
+      if (d.success && d.role === 'RE') {
+        sessionStorage.setItem('hdcre_user', name);
+        sessionStorage.setItem('hdcre_role', d.role);
+        showMainApp(name);
+      } else if (d.success && d.role) {
+        err.textContent = 'Access denied. Your role is: ' + d.role + '. This portal is for Resident Engineers only.';
+      } else if (d.success) {
+        err.textContent = 'Login OK but no role assigned. Ask admin to set your Role.';
       } else {
-        document.getElementById('loginError').textContent = data.error || 'Login failed.';
+        err.textContent = 'Invalid name or password.';
       }
     })
-    .catch(() => {
-      document.getElementById('loginError').textContent = 'Network error. Please try again.';
+    .catch(e => {
+      if (e.message.includes('Failed to fetch')) {
+        err.textContent = 'Network error. Check API_BASE URL.';
+      } else {
+        err.textContent = 'Error: ' + e.message;
+      }
+    })
+    .finally(() => {
+      btn.disabled = false;
+      btn.textContent = 'Login';
     });
 }
 
@@ -88,266 +104,227 @@ function showMainApp(name) {
   loadSites();
 }
 
-function logout() {
-  sessionStorage.clear();
-  location.reload();
-}
+function logout() { sessionStorage.removeItem('hdcre_user'); sessionStorage.removeItem('hdcre_role'); location.reload(); }
 
 // ========== TAB SWITCHING ==========
 
-function switchTab(tab) {
+function switchTab(tabName) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelector('.tab-btn[data-tab="' + tab + '"]').classList.add('active');
-  document.getElementById('tabNewReport').classList.toggle('hidden', tab !== 'new');
-  document.getElementById('tabMyReports').classList.toggle('hidden', tab !== 'myreports');
-  if (tab === 'myreports') loadMyReports();
+  document.querySelector('[data-tab="' + tabName + '"]').classList.add('active');
+  document.getElementById('tabNewReport').classList.toggle('hidden', tabName !== 'new');
+  document.getElementById('tabMyReports').classList.toggle('hidden', tabName !== 'myreports');
+  if (tabName === 'myreports') loadMyReports();
 }
 
-// ========== LOAD MASTER DATA ==========
+// ========== DATA LOADING ==========
 
-function loadSites() {
-  fetch(API_BASE + '?endpoint=sites')
-    .then(r => r.json())
-    .then(data => {
-      if (data.sites) {
-        const sel = document.getElementById('siteSelect');
-        sel.innerHTML = '<option value="">-- Select --</option>';
-        data.sites.forEach(s => {
-          const opt = document.createElement('option');
-          opt.value = s; opt.textContent = s;
-          sel.appendChild(opt);
-        });
-      }
+async function loadSites() {
+  try {
+    const res = await fetch(API_BASE + '?endpoint=sites');
+    const sites = await res.json();
+    const sel = document.getElementById('siteSelect');
+    sel.innerHTML = '<option value="">-- Select --</option>';
+    sites.forEach(s => {
+      const o = document.createElement('option');
+      o.value = s.name;
+      o.textContent = s.name;
+      sel.appendChild(o);
     });
+  } catch (e) { console.error(e); }
 }
 
-function onSiteChange() {
+async function onSiteChange() {
   const site = document.getElementById('siteSelect').value;
   if (!site) return;
-  loadBlocks(site);
-  loadTasks(site);
-  loadLaborTypes(site);
-  loadWorkProgress(site);
-  loadPerformanceRows(site);
+  try {
+    const bRes = await fetch(API_BASE + '?endpoint=blocks&site=' + encodeURIComponent(site));
+    currentBlocks = await bRes.json();
+    renderBlockStatus();
+
+    blockOptionsHTML = currentBlocks.map(b =>
+      '<option value="' + b.blockId + '">' + b.blockId + ' - ' + b.blockName + '</option>'
+    ).join('');
+
+    const tRes = await fetch(API_BASE + '?endpoint=tasks&site=' + encodeURIComponent(site));
+    currentTasks = await tRes.json();
+    renderWorkProgress();
+
+    const lRes = await fetch(API_BASE + '?endpoint=laborTypes&site=' + encodeURIComponent(site));
+    currentLaborTypes = await lRes.json();
+    renderWorkforce();
+
+    // Check for draft
+    checkForDraft(site);
+  } catch (e) { console.error(e); }
 }
 
-function loadBlocks(site) {
-  fetch(API_BASE + '?endpoint=blocks&site=' + encodeURIComponent(site))
-    .then(r => r.json())
-    .then(data => {
-      currentBlocks = data.blocks || [];
-      buildBlockStatusGrid();
-    });
-}
+// ========== BLOCK STATUS ==========
 
-function loadTasks(site) {
-  fetch(API_BASE + '?endpoint=tasks&site=' + encodeURIComponent(site))
-    .then(r => r.json())
-    .then(data => {
-      currentTasks = data.tasks || {};
-      loadWorkProgress(document.getElementById('siteSelect').value);
-    });
-}
-
-function loadLaborTypes(site) {
-  fetch(API_BASE + '?endpoint=laborTypes&site=' + encodeURIComponent(site))
-    .then(r => r.json())
-    .then(data => {
-      currentLaborTypes = data.laborTypes || [];
-      buildWorkforceTable();
-    });
-}
-
-// ========== BLOCK STATUS GRID ==========
-
-function buildBlockStatusGrid() {
-  const container = document.getElementById('blockStatusContainer');
-  container.innerHTML = '';
-  blockOptionsHTML = '';
-  const grid = document.createElement('div');
-  grid.className = 'block-status-grid';
+function renderBlockStatus() {
+  const c = document.getElementById('blockStatusContainer');
+  if (currentBlocks.length === 0) {
+    c.innerHTML = '<p class="hint">No blocks configured for this site.</p>';
+    return;
+  }
+  let html = '<div class="block-status-grid">';
   currentBlocks.forEach(b => {
-    blockOptionsHTML += '<option value="' + b.id + '">' + b.name + '</option>';
-    const item = document.createElement('div');
-    item.className = 'block-status-item';
-    item.innerHTML =
-      '<div class="block-label">' + b.name + ' (' + b.id + ')</div>' +
-      '<label>Status <select class="bs-status" data-block="' + b.id + '">' +
-        '<option>On Track</option><option>Delayed</option><option>Critical</option><option>Completed</option><option>Not Started</option>' +
-      '</select></label>' +
-      '<label>Target Achievement % <input type="number" class="bs-target" data-block="' + b.id + '" min="0" max="100" value="0"></label>';
-    grid.appendChild(item);
+    html += '<div class="block-status-item">' +
+      '<div class="block-label">' + b.blockId + ' - ' + b.blockName + '</div>' +
+      '<label>Status <select class="bs-status" data-block="' + b.blockId + '">' +
+      '<option>Not Active</option><option>On Progress</option><option>Delayed</option><option>On Track</option><option>Completed</option>' +
+      '</select></label></div>';
   });
-  container.appendChild(grid);
+  html += '</div>';
+  c.innerHTML = html;
+  renderPerformance();
 }
 
 // ========== WORK PROGRESS ==========
 
-function loadWorkProgress(site) {
-  if (!site || !currentTasks || Object.keys(currentTasks).length === 0) return;
-  const container = document.getElementById('workProgressContainer');
-  container.innerHTML = '';
-  const table = document.createElement('table');
-  table.id = 'wpTable';
-  table.innerHTML = '<thead><tr><th>Block</th><th>Task Name</th><th>Unit</th><th>Planned QTY</th><th>Executed QTY</th><th>Daily %</th><th>Cumulative</th><th>Overall %</th><th>Remarks</th><th></th></tr></thead><tbody></tbody>';
-  const tbody = table.querySelector('tbody');
-  const allBlocks = Object.keys(currentTasks);
-  allBlocks.forEach(block => {
-    (currentTasks[block] || []).forEach(task => {
-      const row = document.createElement('tr');
-      row.innerHTML =
-        '<td><select class="wp-block">' + blockOptionsHTML + '</select></td>' +
-        '<td>' + task.taskName + '</td>' +
-        '<td>' + task.unit + '</td>' +
-        '<td><input type="number" class="wp-planned" value="' + (task.dailyPlanned || 0) + '" min="0"></td>' +
-        '<td><input type="number" class="wp-executed" value="0" min="0"></td>' +
-        '<td class="wp-daily-pct">0%</td>' +
-        '<td><input type="number" class="wp-cumulative" value="0" min="0"></td>' +
-        '<td class="wp-overall-pct">0%</td>' +
-        '<td><input type="text" class="wp-remarks" placeholder="Remarks"></td>' +
-        '<td><button type="button" class="btn-sm remove-row-btn" style="background:var(--danger)">X</button></td>';
-      const sel = row.querySelector('.wp-block');
-      if (sel) sel.value = block;
-      tbody.appendChild(row);
-    });
-  });
-  container.appendChild(table);
-
-  // Auto-calculate
-  table.addEventListener('input', function(e) {
-    const row = e.target.closest('tr');
-    if (!row) return;
-    const planned = parseFloat(row.querySelector('.wp-planned')?.value) || 0;
-    const executed = parseFloat(row.querySelector('.wp-executed')?.value) || 0;
-    const dailyPct = planned > 0 ? Math.round((executed / planned) * 100) : 0;
-    row.querySelector('.wp-daily-pct').textContent = dailyPct + '%';
-
-    const cumulative = parseFloat(row.querySelector('.wp-cumulative')?.value) || 0;
-    const overallPlanned = 0; // placeholder
-    row.querySelector('.wp-overall-pct').textContent = '0%';
-  });
-
-  // Remove row
-  table.addEventListener('click', function(e) {
-    if (e.target.classList.contains('remove-row-btn')) {
-      e.target.closest('tr').remove();
+function renderWorkProgress() {
+  const c = document.getElementById('workProgressContainer');
+  if (currentBlocks.length === 0) {
+    c.innerHTML = '<p class="hint">No blocks configured.</p>';
+    return;
+  }
+  let html = '<table id="taskTable"><thead><tr><th>#</th><th>Block</th><th>Task</th><th>Unit</th><th>Planned</th><th>Executed</th><th>Remarks</th></tr></thead><tbody>';
+  let counter = 0;
+  currentBlocks.forEach((b) => {
+    const blockTasks = currentTasks[b.blockId] || [];
+    if (blockTasks.length > 0) {
+      blockTasks.forEach(t => {
+        counter++;
+        html += '<tr data-block="' + b.blockId + '">' +
+          '<td>' + counter + '</td>' +
+          '<td><select class="task-block" disabled><option value="' + b.blockId + '" selected>' + b.blockId + '</option></select></td>' +
+          '<td><select class="task-name"><option value="' + t.name + '" selected>' + t.name + '</option></select></td>' +
+          '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" readonly style="width:60px"></td>' +
+          '<td><input type="number" class="task-planned" step="any" value="' + (t.dailyPlannedQty || '') + '" style="width:70px"></td>' +
+          '<td><input type="number" class="task-executed" step="any" style="width:70px"></td>' +
+          '<td><input type="text" class="task-remark" style="width:100px"></td></tr>';
+      });
+    } else {
+      counter++;
+      html += '<tr data-block="' + b.blockId + '">' +
+        '<td>' + counter + '</td>' +
+        '<td><select class="task-block">' + blockOptionsHTML + '</select></td>' +
+        '<td><input type="text" class="task-name-text" placeholder="Task description"></td>' +
+        '<td><input type="text" class="task-unit" placeholder="m3" style="width:60px"></td>' +
+        '<td><input type="number" class="task-planned" step="any" style="width:70px"></td>' +
+        '<td><input type="number" class="task-executed" step="any" style="width:70px"></td>' +
+        '<td><input type="text" class="task-remark" style="width:100px"></td></tr>';
     }
   });
+  html += '</tbody></table>';
+  c.innerHTML = html;
 }
 
 function addGenericRow() {
-  const table = document.getElementById('wpTable');
-  if (!table) return;
-  const tbody = table.querySelector('tbody');
-  const row = document.createElement('tr');
-  row.innerHTML =
-    '<td><select class="wp-block">' + (blockOptionsHTML || '<option>No blocks loaded</option>') + '</select></td>' +
-    '<td><input type="text" class="wp-taskname" placeholder="Task Name"></td>' +
-    '<td><input type="text" class="wp-unit" placeholder="Unit"></td>' +
-    '<td><input type="number" class="wp-planned" value="0" min="0"></td>' +
-    '<td><input type="number" class="wp-executed" value="0" min="0"></td>' +
-    '<td class="wp-daily-pct">0%</td>' +
-    '<td><input type="number" class="wp-cumulative" value="0" min="0"></td>' +
-    '<td class="wp-overall-pct">0%</td>' +
-    '<td><input type="text" class="wp-remarks" placeholder="Remarks"></td>' +
-    '<td><button type="button" class="btn-sm remove-row-btn" style="background:var(--danger)">X</button></td>';
-  tbody.appendChild(row);
-}
-
-// ========== DYNAMIC ROWS (reusable) ==========
-
-function addDynamicRow(tableId) {
-  const table = document.getElementById(tableId);
-  if (!table) return;
-  const tbody = table.querySelector('tbody');
+  const tbody = document.querySelector('#taskTable tbody');
   if (!tbody) return;
-  const headerRow = table.querySelector('thead tr');
-  if (!headerRow) return;
-  const cells = headerRow.querySelectorAll('th');
-  const row = document.createElement('tr');
-  cells.forEach((th, idx) => {
-    const td = document.createElement('td');
-    if (idx === 0 && (th.textContent.includes('Block'))) {
-      td.innerHTML = '<select>' + (blockOptionsHTML || '<option value="">--</option>') + '</select>';
-    } else if (th.textContent.includes('Qty') || th.textContent.includes('Planned') || th.textContent.includes('Available') || th.textContent.includes('Quantity')) {
-      td.innerHTML = '<input type="number" value="0" min="0" style="width:70px">';
-    } else {
-      td.innerHTML = '<input type="text" placeholder="' + th.textContent + '">';
-    }
-    row.appendChild(td);
-  });
-  // Add remove button
-  const td = document.createElement('td');
-  td.innerHTML = '<button type="button" class="btn-sm remove-row-btn" style="background:var(--danger)">X</button>';
-  row.appendChild(td);
-  tbody.appendChild(row);
-
-  // Recalculate workforce totals
-  if (tableId === 'workforceTable') {
-    row.querySelector('input[type="number"]').addEventListener('input', updateWorkforceTotals);
-  }
+  const count = tbody.rows.length + 1;
+  const row = tbody.insertRow();
+  row.innerHTML = '<td>' + count + '</td>' +
+    '<td><select class="task-block">' + blockOptionsHTML + '</select></td>' +
+    '<td><input type="text" class="task-name-text" placeholder="Task description"></td>' +
+    '<td><input type="text" class="task-unit" placeholder="m3" style="width:60px"></td>' +
+    '<td><input type="number" class="task-planned" step="any" style="width:70px"></td>' +
+    '<td><input type="number" class="task-executed" step="any" style="width:70px"></td>' +
+    '<td><input type="text" class="task-remark" style="width:100px"></td>';
 }
 
-// Attach remove-row to all tables via delegation
-document.addEventListener('click', function(e) {
-  if (e.target.classList.contains('remove-row-btn')) {
-    const row = e.target.closest('tr');
-    if (row) row.remove();
-  }
-});
+// ========== WORKFORCE ==========
 
-// ========== WORKFORCE TABLE ==========
-
-function buildWorkforceTable() {
+function renderWorkforce() {
   const tbody = document.querySelector('#workforceTable tbody');
   tbody.innerHTML = '';
   currentLaborTypes.forEach(lt => {
-    const row = document.createElement('tr');
-    row.innerHTML =
+    tbody.innerHTML += '<tr>' +
       '<td>' + lt + '</td>' +
       '<td><input type="number" class="wf-planned" value="0" min="0"></td>' +
       '<td><input type="number" class="wf-available" value="0" min="0"></td>' +
-      '<td><input type="text" class="wf-comments" placeholder="Block allocation notes"></td>' +
-      '<td><button type="button" class="btn-sm remove-row-btn" style="background:var(--danger)">X</button></td>';
-    row.querySelector('.wf-planned').addEventListener('input', updateWorkforceTotals);
-    row.querySelector('.wf-available').addEventListener('input', updateWorkforceTotals);
-    tbody.appendChild(row);
+      '<td><input type="text" class="wf-comments" placeholder="e.g. Block A & B"></td></tr>';
   });
-  updateWorkforceTotals();
+  document.querySelectorAll('.wf-planned, .wf-available').forEach(inp => {
+    inp.addEventListener('input', updateWorkforceTotals);
+  });
 }
 
 function updateWorkforceTotals() {
-  let pTotal = 0, aTotal = 0;
-  document.querySelectorAll('#workforceTable .wf-planned').forEach(i => pTotal += parseFloat(i.value) || 0);
-  document.querySelectorAll('#workforceTable .wf-available').forEach(i => aTotal += parseFloat(i.value) || 0);
-  document.getElementById('wfPlannedTotal').textContent = pTotal;
-  document.getElementById('wfAvailTotal').textContent = aTotal;
+  let p = 0, a = 0;
+  document.querySelectorAll('.wf-planned').forEach(i => { p += parseInt(i.value) || 0; });
+  document.querySelectorAll('.wf-available').forEach(i => { a += parseInt(i.value) || 0; });
+  document.getElementById('wfPlannedTotal').textContent = p;
+  document.getElementById('wfAvailTotal').textContent = a;
 }
 
-// ========== PERFORMANCE ROWS ==========
+// ========== PERFORMANCE ==========
 
-function loadPerformanceRows(site) {
-  const container = document.getElementById('performanceContainer');
-  container.innerHTML = '';
-  if (!currentBlocks.length) {
-    container.innerHTML = '<p class="hint">Select a site first to load performance rows.</p>';
-    return;
-  }
-  const table = document.createElement('table');
-  table.id = 'perfTable';
-  table.innerHTML = '<thead><tr><th>Block</th><th>Daily Target Achievement %</th><th>Status</th></tr></thead><tbody></tbody>';
-  const tbody = table.querySelector('tbody');
+function renderPerformance() {
+  const c = document.getElementById('performanceContainer');
+  if (currentBlocks.length === 0) return;
+  let html = '<table id="perfTable"><thead><tr><th>Block</th><th>Daily Target Achievement</th><th>Status</th></tr></thead><tbody>';
   currentBlocks.forEach(b => {
-    const row = document.createElement('tr');
-    row.innerHTML =
-      '<td>' + b.name + ' (' + b.id + ')</td>' +
-      '<td><input type="number" class="perf-target" data-block="' + b.id + '" min="0" max="100" value="0"></td>' +
-      '<td><select class="perf-status" data-block="' + b.id + '">' +
-        '<option>On Track</option><option>Slightly Delayed</option><option>Significantly Delayed</option><option>Critical</option>' +
-      '</select></td>';
-    tbody.appendChild(row);
+    html += '<tr><td>' + b.blockId + ' - ' + b.blockName + '</td>' +
+      '<td><input type="text" class="perf-achievement" data-block="' + b.blockId + '" placeholder="e.g. 80%"></td>' +
+      '<td><select class="perf-status" data-block="' + b.blockId + '">' +
+      '<option>On Track</option><option>Delayed</option><option>Needs Schedule Update</option><option>Completed</option>' +
+      '</select></td></tr>';
   });
-  container.appendChild(table);
+  html += '</tbody></table>';
+  c.innerHTML = html;
+}
+
+// ========== DYNAMIC ROW ADDER ==========
+
+function addDynamicRow(tableId) {
+  const tbody = document.querySelector('#' + tableId + ' tbody');
+  if (!tbody) return;
+  const row = tbody.insertRow();
+  switch (tableId) {
+    case 'equipmentTable':
+      row.innerHTML = '<td><input type="text" placeholder="e.g. Mixer"></td>' +
+        '<td><input type="number" value="1" min="0"></td>' +
+        '<td><select><option>Good</option><option>Fair</option><option>Broken</option><option>Under Repair</option></select></td>' +
+        '<td><input type="text" placeholder="e.g. Block A"></td>';
+      break;
+    case 'matDeliveredTable': case 'matOnSiteTable':
+      row.innerHTML = '<td><input type="text" placeholder="Description"></td>' +
+        '<td><input type="text" placeholder="m3" style="width:50px"></td>' +
+        '<td><input type="number" step="any"></td>' +
+        '<td><select>' + blockOptionsHTML + '</select></td>';
+      break;
+    case 'issuesTable':
+      row.innerHTML = '<td><select>' + blockOptionsHTML + '</select></td>' +
+        '<td><textarea rows="1" placeholder="Describe the issue..."></textarea></td>';
+      break;
+    case 'testsTable':
+      row.innerHTML = '<td><input type="text" placeholder="Test name"></td>' +
+        '<td><select>' + blockOptionsHTML + '</select></td>' +
+        '<td><input type="text" placeholder="Result"></td>';
+      break;
+    case 'correspondencesTable':
+      row.innerHTML = '<td><input type="date"></td>' +
+        '<td><input type="text" placeholder="From"></td>' +
+        '<td><input type="text" placeholder="To"></td>' +
+        '<td><input type="text" placeholder="Subject"></td>';
+      break;
+    case 'safetyTable':
+      row.innerHTML = '<td><input type="text" placeholder="Safety issue"></td>' +
+        '<td><select>' + blockOptionsHTML + '</select></td>' +
+        '<td><input type="text" placeholder="Action taken"></td>';
+      break;
+    case 'stakeholderTable':
+      row.innerHTML = '<td><input type="text" placeholder="Stakeholder"></td>' +
+        '<td><input type="text" placeholder="Contribution"></td>';
+      break;
+    case 'siteOrdersTable':
+      row.innerHTML = '<td><input type="text" placeholder="Order No."></td>' +
+        '<td><input type="text" placeholder="Issued To"></td>' +
+        '<td><textarea rows="1" placeholder="Instruction"></textarea></td>' +
+        '<td><input type="date"></td>';
+      break;
+  }
 }
 
 // ========== PHOTOS ==========
@@ -360,470 +337,595 @@ function onPhotosSelected(e) {
   metaContainer.innerHTML = '';
 
   Array.from(files).forEach((file, idx) => {
-    // Preview
-    const img = document.createElement('img');
-    img.src = URL.createObjectURL(file);
-    preview.appendChild(img);
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const img = document.createElement('img');
+      img.src = ev.target.result;
+      img.alt = file.name;
+      preview.appendChild(img);
+    };
+    reader.readAsDataURL(file);
 
-    // Meta form
-    const metaItem = document.createElement('div');
-    metaItem.className = 'photo-meta-item';
-    metaItem.innerHTML =
-      '<img src="' + img.src + '">' +
+    const metaDiv = document.createElement('div');
+    metaDiv.className = 'photo-meta-item';
+    metaDiv.innerHTML = '<img src="" alt="preview" data-photo-idx="' + idx + '">' +
       '<div class="meta-fields">' +
-        '<label>Block <select class="photo-block">' + (blockOptionsHTML || '<option value="">--</option>') + '</select></label>' +
-        '<label>Caption <input type="text" class="photo-caption" placeholder="Describe this photo"></label>' +
+      '<label>Block <select class="photo-block">' + (blockOptionsHTML || '<option value="">No blocks loaded</option>') + '</select></label>' +
+      '<label>Caption <input type="text" class="photo-caption" placeholder="Describe this photo..."></label>' +
       '</div>';
-    metaContainer.appendChild(metaItem);
+    metaContainer.appendChild(metaDiv);
+
+    const thumbReader = new FileReader();
+    thumbReader.onload = ev => {
+      metaDiv.querySelector('img[data-photo-idx="' + idx + '"]').src = ev.target.result;
+    };
+    thumbReader.readAsDataURL(file);
   });
 }
 
-// ========== FORM SUBMISSION ==========
+// ========== COLLECT DATA ==========
 
-function handleSubmit(e) {
-  e.preventDefault();
-  const site = document.getElementById('siteSelect').value;
-  if (!site) { showStatus('Please select a site.', 'error'); return; }
+function collectBlockStatuses() {
+  return Array.from(document.querySelectorAll('.bs-status')).map(sel => ({
+    blockId: sel.dataset.block,
+    status: sel.value
+  }));
+}
 
-  const photosInput = document.getElementById('photos');
-  const photoFiles = editingReportId ? [] : Array.from(photosInput.files || []);
-
-  // Collect block statuses
-  const blockStatuses = [];
-  document.querySelectorAll('.block-status-item').forEach(item => {
-    const sel = item.querySelector('.bs-status');
-    const target = item.querySelector('.bs-target');
-    if (sel) {
-      blockStatuses.push({
-        blockName: sel.dataset.block,
-        blockStatus: sel.value,
-        targetAchievement: target ? target.value + '%' : '0%',
-        performanceStatus: getPerformanceStatus(sel.value, target ? parseInt(target.value) : 0)
+function collectTasks() {
+  const rows = document.querySelectorAll('#taskTable tbody tr');
+  const tasks = [];
+  rows.forEach(row => {
+    const blockSel = row.querySelector('.task-block');
+    const taskSel = row.querySelector('.task-name');
+    const taskInput = row.querySelector('.task-name-text');
+    const name = taskSel ? taskSel.value : (taskInput ? taskInput.value : '');
+    const exec = row.querySelector('.task-executed');
+    if (name && exec && exec.value) {
+      tasks.push({
+        blockId: blockSel ? blockSel.value : '',
+        name,
+        unit: row.querySelector('.task-unit') ? row.querySelector('.task-unit').value : '',
+        plannedQty: parseFloat(row.querySelector('.task-planned')?.value) || 0,
+        executedQty: parseFloat(exec.value) || 0,
+        remark: row.querySelector('.task-remark') ? row.querySelector('.task-remark').value : ''
       });
     }
   });
+  return tasks;
+}
 
-  // Collect work progress
-  const workProgress = [];
-  document.querySelectorAll('#wpTable tbody tr, #workProgressContainer table tbody tr').forEach(row => {
-    const block = row.querySelector('.wp-block')?.value || '';
-    const taskName = row.querySelector('.wp-taskname')?.value || (row.children[1]?.textContent?.trim() || '');
-    const unit = row.querySelector('.wp-unit')?.value || (row.children[2]?.textContent?.trim() || '');
-    const plannedQty = parseFloat(row.querySelector('.wp-planned')?.value) || 0;
-    const executedQty = parseFloat(row.querySelector('.wp-executed')?.value) || 0;
-    const dailyCompletion = plannedQty > 0 ? Math.round((executedQty / plannedQty) * 100) : 0;
-    const cumulative = parseFloat(row.querySelector('.wp-cumulative')?.value) || 0;
-    const remarks = row.querySelector('.wp-remarks')?.value || '';
-    workProgress.push({ block, taskName, unit, plannedQty, executedQty, dailyCompletion, cumulativeExecuted: cumulative, overallCompletion: 0, remarks });
-  });
-
-  // Collect workforce
-  const workforce = [];
-  document.querySelectorAll('#workforceTable tbody tr').forEach(row => {
-    const laborType = row.children[0]?.textContent?.trim() || '';
-    const planned = parseFloat(row.querySelector('.wf-planned')?.value) || 0;
-    const available = parseFloat(row.querySelector('.wf-available')?.value) || 0;
-    const comments = row.querySelector('.wf-comments')?.value || '';
-    workforce.push({ laborType, planned, available, comments });
-  });
-
-  // Collect equipment
-  const equipment = [];
-  document.querySelectorAll('#equipmentTable tbody tr').forEach(row => {
-    equipment.push({
-      equipmentType: row.children[0]?.querySelector('input')?.value || row.children[0]?.querySelector('select')?.value || '',
-      quantity: parseFloat(row.children[1]?.querySelector('input')?.value) || 0,
-      workingCondition: row.children[2]?.querySelector('input')?.value || row.children[2]?.querySelector('select')?.value || '',
-      comments: row.children[3]?.querySelector('input')?.value || ''
+function collectTableData(tableId, fields) {
+  const rows = document.querySelectorAll('#' + tableId + ' tbody tr');
+  const data = [];
+  rows.forEach(row => {
+    const cells = row.querySelectorAll('td');
+    const obj = {};
+    fields.forEach((f, i) => {
+      const inp = cells[i]?.querySelector('input, select, textarea');
+      obj[f] = inp ? inp.value : '';
     });
+    if (Object.values(obj).some(v => v !== '' && v !== '0')) data.push(obj);
   });
+  return data;
+}
 
-  // Collect materials delivered
-  const materialsDelivered = [];
-  document.querySelectorAll('#matDeliveredTable tbody tr').forEach(row => {
-    materialsDelivered.push({
-      description: row.children[0]?.querySelector('input')?.value || '',
-      unit: row.children[1]?.querySelector('input')?.value || '',
-      quantity: parseFloat(row.children[2]?.querySelector('input')?.value) || 0,
-      allocatedBlock: row.children[3]?.querySelector('input')?.value || row.children[3]?.querySelector('select')?.value || ''
-    });
-  });
+function collectPerformance() {
+  const rows = document.querySelectorAll('#perfTable tbody tr');
+  return Array.from(rows).map(row => ({
+    block: row.querySelector('.perf-achievement')?.dataset.block || '',
+    targetAchievement: row.querySelector('.perf-achievement')?.value || '',
+    status: row.querySelector('.perf-status')?.value || ''
+  }));
+}
 
-  // Collect materials on site
-  const materialsOnSite = [];
-  document.querySelectorAll('#matOnSiteTable tbody tr').forEach(row => {
-    materialsOnSite.push({
-      description: row.children[0]?.querySelector('input')?.value || '',
-      unit: row.children[1]?.querySelector('input')?.value || '',
-      quantity: parseFloat(row.children[2]?.querySelector('input')?.value) || 0,
-      allocatedBlock: row.children[3]?.querySelector('input')?.value || row.children[3]?.querySelector('select')?.value || ''
-    });
-  });
-
-  // Collect issues
-  const issues = [];
-  document.querySelectorAll('#issuesTable tbody tr').forEach(row => {
-    issues.push({
-      block: row.children[0]?.querySelector('input')?.value || row.children[0]?.querySelector('select')?.value || '',
-      issueDetails: row.children[1]?.querySelector('input')?.value || ''
-    });
-  });
-
-  // Collect tests
-  const tests = [];
-  document.querySelectorAll('#testsTable tbody tr').forEach(row => {
-    tests.push({
-      test: row.children[0]?.querySelector('input')?.value || '',
-      block: row.children[1]?.querySelector('input')?.value || row.children[1]?.querySelector('select')?.value || '',
-      result: row.children[2]?.querySelector('input')?.value || ''
-    });
-  });
-
-  // Collect correspondences
-  const correspondences = [];
-  document.querySelectorAll('#correspondencesTable tbody tr').forEach(row => {
-    correspondences.push({
-      date: row.children[0]?.querySelector('input')?.value || '',
-      from: row.children[1]?.querySelector('input')?.value || '',
-      to: row.children[2]?.querySelector('input')?.value || '',
-      subject: row.children[3]?.querySelector('input')?.value || ''
-    });
-  });
-
-  // Collect safety
-  const safetyIssues = [];
-  document.querySelectorAll('#safetyTable tbody tr').forEach(row => {
-    safetyIssues.push({
-      issue: row.children[0]?.querySelector('input')?.value || '',
-      block: row.children[1]?.querySelector('input')?.value || row.children[1]?.querySelector('select')?.value || '',
-      actionTaken: row.children[2]?.querySelector('input')?.value || ''
-    });
-  });
-
-  // Collect stakeholders
-  const stakeholders = [];
-  document.querySelectorAll('#stakeholderTable tbody tr').forEach(row => {
-    stakeholders.push({
-      stakeholder: row.children[0]?.querySelector('input')?.value || '',
-      contribution: row.children[1]?.querySelector('input')?.value || ''
-    });
-  });
-
-  // Collect site orders
-  const siteOrders = [];
-  document.querySelectorAll('#siteOrdersTable tbody tr').forEach(row => {
-    siteOrders.push({
-      orderNo: row.children[0]?.querySelector('input')?.value || '',
-      issuedTo: row.children[1]?.querySelector('input')?.value || '',
-      instruction: row.children[2]?.querySelector('input')?.value || '',
-      deadline: row.children[3]?.querySelector('input')?.value || ''
-    });
-  });
-
-  // Collect performance
-  const performance = [];
-  document.querySelectorAll('#perfTable tbody tr').forEach(row => {
-    const target = row.querySelector('.perf-target');
-    const status = row.querySelector('.perf-status');
-    if (target) {
-      performance.push({
-        block: target.dataset.block || '',
-        dailyTargetAchievement: target.value + '%',
-        status: status ? status.value : ''
+function collectPhotosWithMeta() {
+  const files = document.getElementById('photos').files;
+  const metaItems = document.querySelectorAll('.photo-meta-item');
+  return Promise.all(Array.from(files).map((file, idx) => new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const metaItem = metaItems[idx];
+      resolve({
+        name: file.name,
+        data: e.target.result,
+        block: metaItem ? metaItem.querySelector('.photo-block')?.value || '' : '',
+        caption: metaItem ? metaItem.querySelector('.photo-caption')?.value || '' : ''
       });
-    }
-  });
-
-  // Build payload
-  const payload = {
-    action: 'submitDailyReport',
-    site: site,
-    reportDate: document.getElementById('reportDate').value,
-    weatherAM: document.getElementById('weatherAM').value,
-    weatherPM: document.getElementById('weatherPM').value,
-    residentEngineer: document.getElementById('reName').value,
-    activitySummary: document.getElementById('activitySummary').value,
-    resourceEfficiency: document.getElementById('resourceEfficiency').value,
-    recommendations: document.getElementById('recommendations').value,
-    holdPointRequests: document.getElementById('holdPointRequests').value,
-    blockStatuses: blockStatuses,
-    workProgress: workProgress,
-    workforce: workforce,
-    equipment: equipment,
-    materialsDelivered: materialsDelivered,
-    materialsOnSite: materialsOnSite,
-    issues: issues,
-    tests: tests,
-    correspondences: correspondences,
-    safetyIssues: safetyIssues,
-    stakeholders: stakeholders,
-    siteOrders: siteOrders,
-    performance: performance,
-    photos: []
-  };
-
-  // Upload photos first if any
-  if (photoFiles.length > 0) {
-    showStatus('Uploading photos...', 'success');
-    const photoPromises = photoFiles.map((file, idx) => {
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = function(e) {
-          const block = document.querySelectorAll('.photo-block')[idx]?.value || '';
-          const caption = document.querySelectorAll('.photo-caption')[idx]?.value || '';
-          payload.photos.push({
-            data: e.target.result.split(',')[1],
-            mimeType: file.type,
-            fileName: file.name,
-            block: block,
-            caption: caption
-          });
-          resolve();
-        };
-        reader.readAsDataURL(file);
-      });
-    });
-    Promise.all(photoPromises).then(() => {
-      sendReport(payload);
-    });
-  } else {
-    sendReport(payload);
-  }
+    };
+    reader.readAsDataURL(file);
+  })));
 }
 
-function sendReport(payload) {
-  showStatus('Submitting report...', 'success');
-  fetch(API_BASE, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify(payload)
-  })
-    .then(r => r.json())
-    .then(data => {
-      if (data.success) {
-        showStatus('Report submitted successfully! ID: ' + data.reportId, 'success');
-        clearDraft();
-        if (!editingReportId) {
-          document.getElementById('dailyForm').reset();
-          document.getElementById('reportDate').valueAsDate = new Date();
-          document.getElementById('reName').value = sessionStorage.getItem('hdcre_user') || '';
-          document.getElementById('blockStatusContainer').innerHTML = '';
-          document.getElementById('workProgressContainer').innerHTML = '<p class="hint">Select a site first to load blocks and scheduled tasks.</p>';
-          document.getElementById('performanceContainer').innerHTML = '<p class="hint">Performance rows load with block statuses.</p>';
-          document.getElementById('photoPreview').innerHTML = '';
-          document.getElementById('photoMetaContainer').innerHTML = '';
-        }
-        editingReportId = null;
-        document.getElementById('editModeBanner').classList.add('hidden');
-        document.getElementById('cancelEditBtn').classList.add('hidden');
-        document.getElementById('submitBtn').textContent = 'Submit Daily Report';
-      } else {
-        showStatus('Error: ' + (data.error || 'Submission failed.'), 'error');
-      }
-    })
-    .catch(() => {
-      showStatus('Network error. Please try again.', 'error');
-    });
-}
-
-function getPerformanceStatus(status, target) {
-  if (status === 'Completed') return 'Completed';
-  if (status === 'Critical' || target < 50) return 'Critical';
-  if (status === 'Delayed' || target < 80) return 'Delayed';
-  return 'On Track';
-}
-
-function showStatus(msg, type) {
-  const el = document.getElementById('status');
-  el.textContent = msg;
-  el.className = type;
-}
-
-// ========== MY REPORTS ==========
-
-function loadMyReports() {
-  const user = sessionStorage.getItem('hdcre_user');
-  const container = document.getElementById('myReportsContent');
-  container.innerHTML = '<p class="hint">Loading reports...</p>';
-  fetch(API_BASE + '?endpoint=reports')
-    .then(r => r.json())
-    .then(data => {
-      allReports = (data.reports || []).filter(r => r.residentEngineer === user);
-      if (allReports.length === 0) {
-        container.innerHTML = '<p class="hint">No reports found for your account.</p>';
-        return;
-      }
-      let html = '<table class="reports-list-table"><thead><tr><th>Date</th><th>Site</th><th>Status</th><th>ID</th><th>Actions</th></tr></thead><tbody>';
-      allReports.forEach(r => {
-        html += '<tr>' +
-          '<td>' + r.reportDate + '</td>' +
-          '<td>' + r.site + '</td>' +
-          '<td><span class="badge ' + r.approvalStatus + '">' + r.approvalStatus + '</span></td>' +
-          '<td>' + r.reportId + '</td>' +
-          '<td><button class="btn-sm view-report-btn" data-id="' + r.reportId + '">View</button></td>' +
-          '</tr>';
-      });
-      html += '</tbody></table>';
-      container.innerHTML = html;
-
-      // View buttons
-      container.querySelectorAll('.view-report-btn').forEach(btn => {
-        btn.addEventListener('click', () => viewReport(btn.dataset.id));
-      });
-    });
-}
-
-function viewReport(reportId) {
-  const modal = document.getElementById('reportViewModal');
-  const content = document.getElementById('reportViewContent');
-  content.innerHTML = '<p class="hint">Loading report...</p>';
-  modal.classList.remove('hidden');
-
-  fetch(API_BASE + '?endpoint=reportDetail&reportId=' + encodeURIComponent(reportId))
-    .then(r => r.json())
-    .then(data => {
-      if (data.error) {
-        content.innerHTML = '<p style="color:var(--danger)">' + data.error + '</p>';
-        return;
-      }
-      let html = '';
-      html += '<div class="detail-section"><h4>Report Info</h4>';
-      html += '<div class="meta-grid">';
-      html += '<span class="label">ID:</span><span>' + data.reportId + '</span>';
-      html += '<span class="label">Date:</span><span>' + data.reportDate + '</span>';
-      html += '<span class="label">Site:</span><span>' + data.site + '</span>';
-      html += '<span class="label">RE:</span><span>' + data.residentEngineer + '</span>';
-      html += '<span class="label">Weather:</span><span>' + data.weatherAM + ' / ' + data.weatherPM + '</span>';
-      html += '<span class="label">Status:</span><span class="badge ' + data.approvalStatus + '">' + data.approvalStatus + '</span>';
-      html += '</div></div>';
-
-      html += '<div class="detail-section"><h4>Activity Summary</h4><p>' + (data.activitySummary || 'N/A') + '</p></div>';
-
-      if (data.blockStatuses && data.blockStatuses.length) {
-        html += '<div class="detail-section"><h4>Block Status</h4><table><tr><th>Block</th><th>Status</th><th>Target</th></tr>';
-        data.blockStatuses.forEach(b => { html += '<tr><td>' + b.blockName + '</td><td>' + b.blockStatus + '</td><td>' + b.targetAchievement + '</td></tr>'; });
-        html += '</table></div>';
-      }
-
-      if (data.workProgress && data.workProgress.length) {
-        html += '<div class="detail-section"><h4>Work Progress</h4><table><tr><th>Block</th><th>Task</th><th>Planned</th><th>Executed</th><th>Daily %</th></tr>';
-        data.workProgress.forEach(w => { html += '<tr><td>' + w.block + '</td><td>' + w.taskName + '</td><td>' + w.plannedQty + '</td><td>' + w.executedQty + '</td><td>' + w.dailyCompletion + '%</td></tr>'; });
-        html += '</table></div>';
-      }
-
-      if (data.workforce && data.workforce.length) {
-        html += '<div class="detail-section"><h4>Workforce</h4><table><tr><th>Type</th><th>Planned</th><th>Available</th></tr>';
-        data.workforce.forEach(w => { html += '<tr><td>' + w.laborType + '</td><td>' + w.planned + '</td><td>' + w.available + '</td></tr>'; });
-        html += '</table></div>';
-      }
-
-      if (data.equipment && data.equipment.length) {
-        html += '<div class="detail-section"><h4>Equipment</h4><table><tr><th>Type</th><th>Qty</th><th>Condition</th></tr>';
-        data.equipment.forEach(e => { html += '<tr><td>' + e.equipmentType + '</td><td>' + e.quantity + '</td><td>' + e.workingCondition + '</td></tr>'; });
-        html += '</table></div>';
-      }
-
-      if (data.materials && data.materials.length) {
-        html += '<div class="detail-section"><h4>Materials</h4><table><tr><th>Desc</th><th>Unit</th><th>Qty</th><th>Type</th><th>Block</th></tr>';
-        data.materials.forEach(m => { html += '<tr><td>' + m.description + '</td><td>' + m.unit + '</td><td>' + m.quantity + '</td><td>' + m.type + '</td><td>' + m.allocatedBlock + '</td></tr>'; });
-        html += '</table></div>';
-      }
-
-      if (data.issues && data.issues.length) {
-        html += '<div class="detail-section"><h4>Issues</h4><table><tr><th>Block</th><th>Details</th></tr>';
-        data.issues.forEach(i => { html += '<tr><td>' + i.block + '</td><td>' + i.issueDetails + '</td></tr>'; });
-        html += '</table></div>';
-      }
-
-      if (data.performance && data.performance.length) {
-        html += '<div class="detail-section"><h4>Performance</h4><table><tr><th>Block</th><th>Target</th><th>Status</th></tr>';
-        data.performance.forEach(p => { html += '<tr><td>' + p.block + '</td><td>' + p.dailyTargetAchievement + '</td><td>' + p.status + '</td></tr>'; });
-        html += '</table>';
-        html += '<p><strong>Efficiency:</strong> ' + (data.resourceEfficiency || 'N/A') + '</p>';
-        html += '<p><strong>Recommendations:</strong> ' + (data.recommendations || 'N/A') + '</p>';
-        html += '</div>';
-      }
-
-      if (data.photos && data.photos.length) {
-        html += '<div class="detail-section"><h4>Photos</h4><div class="photo-grid">';
-        data.photos.forEach(p => {
-          if (p.photoUrl) html += '<div><img src="' + p.photoUrl + '" alt="' + (p.caption || '') + '"><br><small>' + (p.caption || '') + ' - ' + (p.block || '') + '</small></div>';
-        });
-        html += '</div></div>';
-      }
-
-      if (data.directorComments) {
-        html += '<div class="detail-section"><h4>Director Comments</h4><p>' + data.directorComments + '</p></div>';
-      }
-
-      content.innerHTML = html;
-    });
-}
-
-// ========== EDIT REPORT ==========
-
-function cancelEdit() {
-  editingReportId = null;
-  document.getElementById('dailyForm').reset();
-  document.getElementById('reportDate').valueAsDate = new Date();
-  document.getElementById('reName').value = sessionStorage.getItem('hdcre_user') || '';
-  document.getElementById('editModeBanner').classList.add('hidden');
-  document.getElementById('cancelEditBtn').classList.add('hidden');
-  document.getElementById('submitBtn').textContent = 'Submit Daily Report';
-  document.getElementById('photoSectionNote').classList.add('hidden');
-}
-
-// ========== DRAFT ==========
+// ========== DRAFT SAVE / LOAD ==========
 
 function saveDraft() {
   const site = document.getElementById('siteSelect').value;
   if (!site) return;
+  // Don't save if in edit mode
+  if (editingReportId) return;
+
+  const draftData = {
+    site: site,
+    reportDate: document.getElementById('reportDate').value,
+    weatherAM: document.getElementById('weatherAM').value,
+    weatherPM: document.getElementById('weatherPM').value,
+    activitySummary: document.getElementById('activitySummary').value,
+    blockStatuses: collectBlockStatuses(),
+    tasks: collectTasks(),
+    workforce: collectTableData('workforceTable', ['laborType', 'planned', 'available', 'comments']),
+    equipment: collectTableData('equipmentTable', ['type', 'qty', 'condition', 'comments']),
+    materialsDelivered: collectTableData('matDeliveredTable', ['desc', 'unit', 'qty', 'allocatedBlock']),
+    materialsOnSite: collectTableData('matOnSiteTable', ['desc', 'unit', 'qty', 'allocatedBlock']),
+    issues: collectTableData('issuesTable', ['block', 'details']),
+    tests: collectTableData('testsTable', ['testName', 'block', 'result']),
+    correspondences: collectTableData('correspondencesTable', ['date', 'from', 'to', 'subject']),
+    safetyIssues: collectTableData('safetyTable', ['issue', 'block', 'actionTaken']),
+    stakeholderContribution: collectTableData('stakeholderTable', ['stakeholder', 'contribution']),
+    resourceEfficiency: document.getElementById('resourceEfficiency').value,
+    recommendations: document.getElementById('recommendations').value,
+    performance: collectPerformance(),
+    siteOrders: collectTableData('siteOrdersTable', ['orderNo', 'issuedTo', 'instruction', 'deadline']),
+    holdPointRequests: document.getElementById('holdPointRequests').value,
+    timestamp: new Date().toISOString()
+  };
+
   try {
-    const formData = {
-      weatherAM: document.getElementById('weatherAM').value,
-      weatherPM: document.getElementById('weatherPM').value,
-      activitySummary: document.getElementById('activitySummary').value,
-      resourceEfficiency: document.getElementById('resourceEfficiency').value,
-      recommendations: document.getElementById('recommendations').value,
-      holdPointRequests: document.getElementById('holdPointRequests').value
-    };
-    const key = 'hdcre_draft_' + site + '_' + document.getElementById('reportDate').value;
-    localStorage.setItem(key, JSON.stringify(formData));
-    localStorage.setItem('hdcre_draft_key', key);
-  } catch (e) {}
+    localStorage.setItem('hdcre_draft_' + site, JSON.stringify(draftData));
+  } catch (e) { console.warn('Draft save failed:', e); }
 }
 
-function checkForDraft() {
+function checkForDraft(site) {
+  if (editingReportId) return;
   try {
-    const key = localStorage.getItem('hdcre_draft_key');
-    if (!key) return;
-    const data = JSON.parse(localStorage.getItem(key));
-    if (!data) return;
+    const raw = localStorage.getItem('hdcre_draft_' + site);
+    if (!raw) return;
+    const draft = JSON.parse(raw);
     const banner = document.getElementById('draftBanner');
-    banner.innerHTML = 'Draft found for ' + key.replace('hdcre_draft_', '') + '. <a href="#" id="restoreDraft">Click to restore</a> or <a href="#" id="clearDraft">dismiss</a>.';
+    const timeStr = draft.timestamp ? new Date(draft.timestamp).toLocaleString() : '';
+    banner.innerHTML = '<strong>Draft found</strong> (saved ' + timeStr + ') - ' +
+      '<a href="#" id="restoreDraftBtn" style="color:#00695C;font-weight:700">Restore Draft</a> | ' +
+      '<a href="#" id="dismissDraftBtn" style="color:#C44536">Dismiss</a>';
     banner.classList.remove('hidden');
-    document.getElementById('restoreDraft').addEventListener('click', function(e) {
+
+    document.getElementById('restoreDraftBtn').addEventListener('click', (e) => {
       e.preventDefault();
-      if (data.weatherAM) document.getElementById('weatherAM').value = data.weatherAM;
-      if (data.weatherPM) document.getElementById('weatherPM').value = data.weatherPM;
-      if (data.activitySummary) document.getElementById('activitySummary').value = data.activitySummary;
-      if (data.resourceEfficiency) document.getElementById('resourceEfficiency').value = data.resourceEfficiency;
-      if (data.recommendations) document.getElementById('recommendations').value = data.recommendations;
-      if (data.holdPointRequests) document.getElementById('holdPointRequests').value = data.holdPointRequests;
-      banner.classList.add('hidden');
+      restoreDraft(site);
     });
-    document.getElementById('clearDraft').addEventListener('click', function(e) {
+    document.getElementById('dismissDraftBtn').addEventListener('click', (e) => {
       e.preventDefault();
-      clearDraft();
+      clearDraft(site);
       banner.classList.add('hidden');
     });
   } catch (e) {}
 }
 
-function clearDraft() {
+function restoreDraft(site) {
   try {
-    const key = localStorage.getItem('hdcre_draft_key');
-    if (key) localStorage.removeItem(key);
-    localStorage.removeItem('hdcre_draft_key');
-  } catch (e) {}
+    const raw = localStorage.getItem('hdcre_draft_' + site);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+
+    document.getElementById('siteSelect').value = d.site || '';
+    document.getElementById('reportDate').value = d.reportDate || '';
+    document.getElementById('weatherAM').value = d.weatherAM || '';
+    document.getElementById('weatherPM').value = d.weatherPM || '';
+    document.getElementById('activitySummary').value = d.activitySummary || '';
+    document.getElementById('resourceEfficiency').value = d.resourceEfficiency || '';
+    document.getElementById('recommendations').value = d.recommendations || '';
+    document.getElementById('holdPointRequests').value = d.holdPointRequests || '';
+
+    // Restore block statuses
+    if (d.blockStatuses && currentBlocks.length > 0) {
+      document.querySelectorAll('.bs-status').forEach(sel => {
+        const match = d.blockStatuses.find(b => b.blockId === sel.dataset.block);
+        if (match) sel.value = match.status;
+      });
+    }
+
+    // Restore tasks - clear and re-add
+    if (d.tasks && d.tasks.length > 0) {
+      const tbody = document.querySelector('#taskTable tbody');
+      if (tbody) {
+        tbody.innerHTML = '';
+        d.tasks.forEach((t, idx) => {
+          const row = tbody.insertRow();
+          row.innerHTML = '<td>' + (idx + 1) + '</td>' +
+            '<td><select class="task-block">' + blockOptionsHTML + '</select></td>' +
+            '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
+            '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" style="width:60px"></td>' +
+            '<td><input type="number" class="task-planned" step="any" value="' + (t.plannedQty || 0) + '" style="width:70px"></td>' +
+            '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:70px"></td>' +
+            '<td><input type="text" class="task-remark" value="' + (t.remark || '') + '" style="width:100px"></td>';
+          if (t.blockId) {
+            const sel = row.querySelector('.task-block');
+            if (sel) sel.value = t.blockId;
+          }
+        });
+      }
+    }
+
+    // Restore simple tables
+    restoreTableData('workforceTable', d.workforce, ['laborType', 'planned', 'available', 'comments']);
+    restoreTableData('equipmentTable', d.equipment, ['type', 'qty', 'condition', 'comments']);
+    restoreTableData('matDeliveredTable', d.materialsDelivered, ['desc', 'unit', 'qty', 'allocatedBlock']);
+    restoreTableData('matOnSiteTable', d.materialsOnSite, ['desc', 'unit', 'qty', 'allocatedBlock']);
+    restoreTableData('issuesTable', d.issues, ['block', 'details']);
+    restoreTableData('testsTable', d.tests, ['testName', 'block', 'result']);
+    restoreTableData('correspondencesTable', d.correspondences, ['date', 'from', 'to', 'subject']);
+    restoreTableData('safetyTable', d.safetyIssues, ['issue', 'block', 'actionTaken']);
+    restoreTableData('stakeholderTable', d.stakeholderContribution, ['stakeholder', 'contribution']);
+    restoreTableData('siteOrdersTable', d.siteOrders, ['orderNo', 'issuedTo', 'instruction', 'deadline']);
+
+    // Restore performance
+    if (d.performance) {
+      document.querySelectorAll('.perf-achievement').forEach(inp => {
+        const match = d.performance.find(p => p.block === inp.dataset.block);
+        if (match) inp.value = match.targetAchievement || '';
+      });
+      document.querySelectorAll('.perf-status').forEach(sel => {
+        const match = d.performance.find(p => p.block === sel.dataset.block);
+        if (match) sel.value = match.status || 'On Track';
+      });
+    }
+
+    updateWorkforceTotals();
+    document.getElementById('draftBanner').classList.add('hidden');
+    document.getElementById('status').className = '';
+    document.getElementById('status').textContent = 'Draft restored.';
+  } catch (e) {
+    console.error('Draft restore failed:', e);
+  }
+}
+
+function restoreTableData(tableId, data, fields) {
+  if (!data || data.length === 0) return;
+  const tbody = document.querySelector('#' + tableId + ' tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  data.forEach(row => {
+    const tr = tbody.insertRow();
+    fields.forEach((f, i) => {
+      const td = tr.insertCell();
+      if (f === 'block' || f === 'allocatedBlock') {
+        td.innerHTML = '<select>' + blockOptionsHTML + '</select>';
+        if (row[f]) td.querySelector('select').value = row[f];
+      } else if (f === 'condition') {
+        td.innerHTML = '<select><option>Good</option><option>Fair</option><option>Broken</option><option>Under Repair</option></select>';
+        if (row[f]) td.querySelector('select').value = row[f];
+      } else {
+        const inp = document.createElement('input');
+        inp.type = (f === 'date' || f === 'deadline') ? 'date' : (f === 'qty' || f === 'planned' || f === 'available') ? 'number' : 'text';
+        if (inp.type === 'number') inp.step = 'any';
+        inp.value = row[f] || '';
+        inp.placeholder = '...';
+        td.appendChild(inp);
+      }
+    });
+  });
+}
+
+function clearDraft(site) {
+  if (!site) site = document.getElementById('siteSelect').value;
+  if (site) localStorage.removeItem('hdcre_draft_' + site);
+}
+
+// ========== MY REPORTS ==========
+
+async function loadMyReports() {
+  const container = document.getElementById('myReportsContent');
+  container.innerHTML = 'Loading...';
+  try {
+    const res = await fetch(API_BASE + '?endpoint=reports');
+    allReports = await res.json();
+    const userName = sessionStorage.getItem('hdcre_user') || '';
+    const myReports = allReports.filter(r =>
+      (r.reName || '').toLowerCase() === userName.toLowerCase()
+    );
+
+    if (myReports.length === 0) {
+      container.innerHTML = '<p class="hint">No reports found for your account.</p>';
+      return;
+    }
+
+    let html = '<table class="reports-list-table"><thead><tr>' +
+      '<th>Report ID</th><th>Site</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+    myReports.forEach(r => {
+      const statusClass = r.status || 'Pending';
+      html += '<tr><td style="font-size:0.8rem">' + r.id + '</td>' +
+        '<td>' + r.site + '</td><td>' + r.date + '</td>' +
+        '<td><span class="badge ' + statusClass + '">' + statusClass + '</span></td>' +
+        '<td><button class="btn-sm view-report-btn" data-id="' + r.id + '">View</button>';
+      if (r.status === 'Pending') {
+        html += ' <button class="btn-sm edit-report-btn" data-id="' + r.id + '">Edit</button>';
+      }
+      html += '</td></tr>';
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+
+    container.querySelectorAll('.view-report-btn').forEach(btn => {
+      btn.addEventListener('click', () => viewMyReport(btn.dataset.id));
+    });
+    container.querySelectorAll('.edit-report-btn').forEach(btn => {
+      btn.addEventListener('click', () => editMyReport(btn.dataset.id));
+    });
+  } catch (e) {
+    container.innerHTML = '<p class="hint" style="color:#C44536">Failed to load reports.</p>';
+  }
+}
+
+async function viewMyReport(reportId) {
+  try {
+    const res = await fetch(API_BASE + '?endpoint=reportDetail&reportId=' + reportId);
+    const data = await res.json();
+    if (!data.success) { alert('Could not load report.'); return; }
+
+    const rp = data.report;
+    let h = '<h3 style="color:var(--primary);margin-top:0">' + rp.site + ' - ' + rp.date + '</h3>';
+    h += '<div class="meta-grid"><span class="label">RE:</span><span>' + rp.reName + '</span>';
+    h += '<span class="label">Weather:</span><span>' + (rp.weatherAM || '') + ' / ' + (rp.weatherPM || '') + '</span>';
+    h += '<span class="label">Efficiency:</span><span>' + (rp.efficiency || 'N/A') + '</span>';
+    h += '<span class="label">Status:</span><span class="badge ' + (rp.status || '') + '">' + (rp.status || '') + '</span></div>';
+    h += '<p><strong>Activity Summary:</strong> ' + (rp.activitySummary || '-') + '</p>';
+
+    function renderSection(title, items, cols) {
+      if (!items || items.length === 0) return '';
+      let s = '<div class="detail-section"><h4>' + title + '</h4><table><tr>';
+      cols.forEach(c => { s += '<th>' + c + '</th>'; });
+      s += '</tr>';
+      items.forEach(item => {
+        s += '<tr>';
+        cols.forEach(c => { s += '<td>' + (item[c] || '') + '</td>'; });
+        s += '</tr>';
+      });
+      return s + '</table></div>';
+    }
+
+    h += renderSection('Block Status', rp.blockStatuses, ['Block Name', 'Block Status', 'Target Achievement', 'Performance Status']);
+    h += renderSection('Work Progress', rp.tasks, ['Block', 'Task Name', 'Unit', 'Planned QTY', 'Executed QTY', 'Daily Completion %', 'Cumulative Executed QTY', 'Overall Completion %']);
+    h += renderSection('Workforce', rp.workforce, ['Labor Type', 'Planned', 'Available', 'Comments']);
+    h += renderSection('Equipment', rp.equipment, ['Equipment Type', 'Quantity', 'Working Condition', 'Comments']);
+    h += renderSection('Materials Delivered', rp.materialsDelivered, ['Description', 'Unit', 'Quantity', 'Allocated Block']);
+    h += renderSection('Materials On Site', rp.materialsOnSite, ['Description', 'Unit', 'Quantity', 'Allocated Block']);
+    h += renderSection('Issues', rp.issues, ['Block', 'Issue Details']);
+    h += renderSection('Tests', rp.tests, ['Test', 'Block', 'Result']);
+    h += renderSection('Correspondences', rp.correspondences, ['Date', 'From', 'To', 'Subject']);
+    h += renderSection('Safety Issues', rp.safetyIssues, ['Issue', 'Block', 'Action Taken']);
+    h += renderSection('Stakeholder Contribution', rp.stakeholderContribution, ['Stakeholder', 'Contribution']);
+    h += renderSection('Performance', rp.performance, ['Block', 'Daily Target Achievement', 'Status']);
+    h += renderSection('Site Orders', rp.siteOrders, ['Order No', 'Issued To', 'Instruction', 'Deadline']);
+
+    if (rp.holdPointRequests) {
+      h += '<div class="detail-section"><h4>Hold-Point Requests</h4><p>' + rp.holdPointRequests + '</p></div>';
+    }
+
+    if (rp.photos && rp.photos.length > 0) {
+      h += '<div class="detail-section"><h4>Photos</h4><div class="photo-grid">';
+      rp.photos.forEach(p => {
+        if (p.url) h += '<img src="' + p.url + '" alt="' + (p.caption || '') + '" title="' + (p.caption || '') + '">';
+      });
+      h += '</div></div>';
+    }
+
+    document.getElementById('reportViewContent').innerHTML = h;
+    document.getElementById('reportViewModal').classList.remove('hidden');
+  } catch (e) {
+    alert('Error loading report.');
+  }
+}
+
+function closeReportView() {
+  document.getElementById('reportViewModal').classList.add('hidden');
+}
+
+async function editMyReport(reportId) {
+  const status = document.getElementById('status');
+  status.className = '';
+  status.textContent = 'Loading report for editing...';
+
+  try {
+    const res = await fetch(API_BASE + '?endpoint=reportForEdit&reportId=' + reportId);
+    const data = await res.json();
+
+    if (!data.success) {
+      status.className = 'error';
+      status.textContent = 'Error: ' + (data.message || 'Cannot load report.');
+      return;
+    }
+
+    const report = data.report;
+    editingReportId = reportId;
+
+    // Switch to New Report tab
+    switchTab('new');
+
+    // Populate basic fields
+    document.getElementById('siteSelect').value = report.site || '';
+    document.getElementById('reportDate').value = report.reportDate || '';
+    document.getElementById('weatherAM').value = report.weatherAM || '';
+    document.getElementById('weatherPM').value = report.weatherPM || '';
+    document.getElementById('activitySummary').value = report.activitySummary || '';
+    document.getElementById('resourceEfficiency').value = report.resourceEfficiency || '';
+    document.getElementById('recommendations').value = report.recommendations || '';
+    document.getElementById('holdPointRequests').value = report.holdPointRequests || '';
+
+    // Trigger site change to load blocks/tasks
+    await onSiteChange();
+
+    // Populate block statuses
+    if (report.blockStatuses) {
+      document.querySelectorAll('.bs-status').forEach(sel => {
+        const match = report.blockStatuses.find(b => b.blockId === sel.dataset.block);
+        if (match) {
+          sel.value = match.status || 'Not Active';
+        }
+      });
+    }
+
+    // Populate tasks
+    if (report.tasks && report.tasks.length > 0) {
+      const tbody = document.querySelector('#taskTable tbody');
+      if (tbody) {
+        tbody.innerHTML = '';
+        report.tasks.forEach((t, idx) => {
+          const row = tbody.insertRow();
+          row.innerHTML = '<td>' + (idx + 1) + '</td>' +
+            '<td><select class="task-block">' + blockOptionsHTML + '</select></td>' +
+            '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
+            '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" style="width:60px"></td>' +
+            '<td><input type="number" class="task-planned" step="any" value="' + (t.plannedQty || 0) + '" style="width:70px"></td>' +
+            '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:70px"></td>' +
+            '<td><input type="text" class="task-remark" value="' + (t.remark || '') + '" style="width:100px"></td>';
+          if (t.blockId) {
+            const bsel = row.querySelector('.task-block');
+            if (bsel) bsel.value = t.blockId;
+          }
+        });
+      }
+    }
+
+    // Populate simple tables
+    restoreTableData('workforceTable', report.workforce, ['laborType', 'planned', 'available', 'comments']);
+    restoreTableData('equipmentTable', report.equipment, ['type', 'qty', 'condition', 'comments']);
+    restoreTableData('matDeliveredTable', report.materialsDelivered, ['desc', 'unit', 'qty', 'allocatedBlock']);
+    restoreTableData('matOnSiteTable', report.materialsOnSite, ['desc', 'unit', 'qty', 'allocatedBlock']);
+    restoreTableData('issuesTable', report.issues, ['block', 'details']);
+    restoreTableData('testsTable', report.tests, ['testName', 'block', 'result']);
+    restoreTableData('correspondencesTable', report.correspondences, ['date', 'from', 'to', 'subject']);
+    restoreTableData('safetyTable', report.safetyIssues, ['issue', 'block', 'actionTaken']);
+    restoreTableData('stakeholderTable', report.stakeholderContribution, ['stakeholder', 'contribution']);
+    restoreTableData('siteOrdersTable', report.siteOrders, ['orderNo', 'issuedTo', 'instruction', 'deadline']);
+
+    // Populate performance
+    if (report.performance) {
+      document.querySelectorAll('.perf-achievement').forEach(inp => {
+        const match = report.performance.find(p => p.block === inp.dataset.block);
+        if (match) inp.value = match.targetAchievement || '';
+      });
+      document.querySelectorAll('.perf-status').forEach(sel => {
+        const match = report.performance.find(p => p.block === sel.dataset.block);
+        if (match) sel.value = match.status || 'On Track';
+      });
+    }
+
+    updateWorkforceTotals();
+
+    // Show edit mode UI
+    document.getElementById('submitBtn').textContent = 'Update Report';
+    document.getElementById('cancelEditBtn').classList.remove('hidden');
+    document.getElementById('editModeBanner').classList.remove('hidden');
+    document.getElementById('editModeBanner').textContent = 'Editing Report: ' + reportId;
+    document.getElementById('photoSection').style.opacity = '0.5';
+    document.getElementById('photoSection').style.pointerEvents = 'none';
+    document.getElementById('photoSectionNote').classList.remove('hidden');
+
+    status.className = 'success';
+    status.textContent = 'Report loaded for editing.';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  } catch (e) {
+    status.className = 'error';
+    status.textContent = 'Error loading report: ' + e.message;
+  }
+}
+
+function cancelEdit() {
+  editingReportId = null;
+  document.getElementById('submitBtn').textContent = 'Submit Daily Report';
+  document.getElementById('cancelEditBtn').classList.add('hidden');
+  document.getElementById('editModeBanner').classList.add('hidden');
+  document.getElementById('photoSection').style.opacity = '1';
+  document.getElementById('photoSection').style.pointerEvents = 'auto';
+  document.getElementById('photoSectionNote').classList.add('hidden');
+  document.getElementById('status').className = '';
+  document.getElementById('status').textContent = 'Edit cancelled.';
+  document.getElementById('dailyForm').reset();
+  document.getElementById('reportDate').valueAsDate = new Date();
+  document.getElementById('reName').value = sessionStorage.getItem('hdcre_user') || '';
+}
+
+// ========== SUBMIT ==========
+
+async function handleSubmit(e) {
+  e.preventDefault();
+
+  // Photo check only for new reports
+  if (!editingReportId) {
+    const photos = document.getElementById('photos').files;
+    if (photos.length < 3) { alert('Please upload at least 3 photos.'); return; }
+  }
+
+  const status = document.getElementById('status');
+  status.className = '';
+  status.textContent = editingReportId ? 'Updating...' : 'Submitting...';
+
+  const report = {
+    site: document.getElementById('siteSelect').value,
+    reportDate: document.getElementById('reportDate').value,
+    weatherAM: document.getElementById('weatherAM').value,
+    weatherPM: document.getElementById('weatherPM').value,
+    reName: document.getElementById('reName').value,
+    activitySummary: document.getElementById('activitySummary').value,
+    blockStatuses: collectBlockStatuses(),
+    tasks: collectTasks(),
+    workforce: collectTableData('workforceTable', ['laborType', 'planned', 'available', 'comments']),
+    equipment: collectTableData('equipmentTable', ['type', 'qty', 'condition', 'comments']),
+    materialsDelivered: collectTableData('matDeliveredTable', ['desc', 'unit', 'qty', 'allocatedBlock']),
+    materialsOnSite: collectTableData('matOnSiteTable', ['desc', 'unit', 'qty', 'allocatedBlock']),
+    issues: collectTableData('issuesTable', ['block', 'details']),
+    tests: collectTableData('testsTable', ['testName', 'block', 'result']),
+    correspondences: collectTableData('correspondencesTable', ['date', 'from', 'to', 'subject']),
+    safetyIssues: collectTableData('safetyTable', ['issue', 'block', 'actionTaken']),
+    stakeholderContribution: collectTableData('stakeholderTable', ['stakeholder', 'contribution']),
+    resourceEfficiency: document.getElementById('resourceEfficiency').value,
+    recommendations: document.getElementById('recommendations').value,
+    performance: collectPerformance(),
+    siteOrders: collectTableData('siteOrdersTable', ['orderNo', 'issuedTo', 'instruction', 'deadline']),
+    holdPointRequests: document.getElementById('holdPointRequests').value
+  };
+
+  try {
+    let action, body;
+    if (editingReportId) {
+      action = 'updateReport';
+      report.reportId = editingReportId;
+      body = { action: action, report: report };
+    } else {
+      action = 'submitReport';
+      report.photos = await collectPhotosWithMeta();
+      body = { action: action, report: report };
+    }
+
+    const res = await fetch(API_BASE, {
+      method: 'POST',
+      body: JSON.stringify(body)
+    });
+    const result = await res.json();
+
+    if (result.success) {
+      status.className = 'success';
+      if (editingReportId) {
+        status.textContent = 'Report updated successfully! ID: ' + editingReportId;
+        cancelEdit();
+      } else {
+        status.textContent = 'Report submitted successfully! Pending Director review. ID: ' + result.reportId;
+        clearDraft();
+        document.getElementById('dailyForm').reset();
+        document.getElementById('reportDate').valueAsDate = new Date();
+        document.getElementById('reName').value = sessionStorage.getItem('hdcre_user') || '';
+        document.getElementById('photoPreview').innerHTML = '';
+        document.getElementById('photoMetaContainer').innerHTML = '';
+        document.getElementById('blockStatusContainer').innerHTML = '<p class="hint">Select a site first to load blocks.</p>';
+        document.getElementById('workProgressContainer').innerHTML = '<p class="hint">Select a site first to load blocks.</p>';
+        document.getElementById('performanceContainer').innerHTML = '<p class="hint">Performance rows load with block statuses.</p>';
+      }
+    } else {
+      status.className = 'error';
+      status.textContent = 'Error: ' + (result.message || 'Unknown');
+    }
+  } catch (err) {
+    status.className = 'error';
+    status.textContent = 'Submission failed. Check connection.';
+  }
 }
