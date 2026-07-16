@@ -20,6 +20,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('logoutLink').addEventListener('click', logout);
   document.getElementById('siteSelect').addEventListener('change', onSiteChange);
   document.getElementById('addTaskRow').addEventListener('click', addGenericRow);
+  document.getElementById('populateBlockStatus').addEventListener('click', () => {
+    console.log('[Button] Populate Block Status clicked');
+    autoCalcBlockStatus();
+  });
   document.querySelectorAll('.add-row-btn').forEach(btn => {
     btn.addEventListener('click', () => addDynamicRow(btn.dataset.target));
   });
@@ -225,33 +229,51 @@ function autoCalcBlockStatus() {
 
   // Accumulate actual progress from work progress rows
   console.log('[autoCalc] Reading', taskRows.length, 'task rows, reportDate:', reportDateStr);
+  console.log('[autoCalc] currentBlocks:', currentBlocks.map(b => b.blockId).join(', '));
+  console.log('[autoCalc] currentTasks keys:', Object.keys(currentTasks).join(', '));
+
   taskRows.forEach(row => {
     const blockId = row.querySelector('.task-block')?.value || row.dataset.block || '';
     const taskName = row.querySelector('.task-name')?.value || row.querySelector('.task-name-text')?.value || '';
     const cumulativeInput = row.querySelector('.task-cumulative');
+    const executedInput = row.querySelector('.task-executed');
     const cumulative = parseFloat(cumulativeInput?.value) || 0;
+    const executed = parseFloat(executedInput?.value) || 0;
+    // Use cumulative first; if empty, fall back to daily executed
+    const actualQty = cumulative > 0 ? cumulative : executed;
 
-    if (!blockId || cumulative <= 0) return;
+    if (!blockId || actualQty <= 0) {
+      if (blockId && (cumulative > 0 || executed > 0)) {
+        console.log('[autoCalc] SKIP (no blockId or qty=0) blockId=' + blockId + ' cumul=' + cumulative + ' exec=' + executed);
+      }
+      return;
+    }
 
     // Find matching task in schedule to get overallPlannedQty and duration
     const tasks = currentTasks[blockId] || [];
     const match = tasks.find(t => t.name === taskName);
+    console.log('[autoCalc]', blockId, taskName, 'actualQty=' + actualQty + ' (cumul=' + cumulative + ', exec=' + executed + ')', 'match=' + !!match);
+
+    if (!match) {
+      console.warn('[autoCalc] NO MATCH for', blockId, taskName, '- available tasks:', tasks.map(t => t.name).join(', '));
+      return;
+    }
 
     // Fallback: if overallPlannedQty is 0, compute from dailyPlannedQty * duration
-    let overallPlanned = match ? (match.overallPlannedQty || 0) : 0;
-    if (match && overallPlanned <= 0 && (match.dailyPlannedQty > 0) && (match.duration > 0)) {
+    let overallPlanned = match.overallPlannedQty || 0;
+    if (overallPlanned <= 0 && (match.dailyPlannedQty > 0) && (match.duration > 0)) {
       overallPlanned = match.dailyPlannedQty * match.duration;
       console.log('[autoCalc] Fallback: ' + taskName + ' overall=' + overallPlanned + ' (daily=' + match.dailyPlannedQty + ' x dur=' + match.duration + ')');
     }
 
     if (overallPlanned > 0 && blockData[blockId]) {
-      const dur = parseInt(match?.duration) || 1;
-      const taskPct = Math.min((cumulative / overallPlanned) * 100, 100);
+      const dur = parseInt(match.duration) || 1;
+      const taskPct = Math.min((actualQty / overallPlanned) * 100, 100);
       blockData[blockId].actualSum += taskPct * dur;
       blockData[blockId].weightSum += dur;
-      console.log('[autoCalc]', blockId, taskName, 'cumul=' + cumulative, 'overall=' + overallPlanned, 'pct=' + taskPct.toFixed(1) + '%');
-    } else if (cumulative > 0) {
-      console.warn('[autoCalc] SKIP', blockId, taskName, 'cumul=' + cumulative, 'overallPlanned=' + overallPlanned, 'match=' + !!match);
+      console.log('[autoCalc] OK', blockId, taskName, 'actualQty=' + actualQty, 'overall=' + overallPlanned, 'pct=' + taskPct.toFixed(1) + '%, dur=' + dur);
+    } else {
+      console.warn('[autoCalc] SKIP (overallPlanned=0) blockId=' + blockId, ' + taskName, 'overallPlanned=' + overallPlanned);
     }
   });
 
