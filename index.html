@@ -78,12 +78,13 @@
             <p class="hint">Select a site first to load blocks and scheduled tasks.</p>
           </div>
           <button type="button" id="addTaskRow" class="btn-sm">+ Add Task Row</button>
+          <button type="button" id="populateBlockStatus" class="btn-sm" style="margin-left:8px;background:var(--primary);color:#fff;padding:6px 16px;border:none;border-radius:4px;cursor:pointer;font-weight:600">Populate Block Status</button>
         </fieldset>
 
         <!-- 3. BLOCK STATUS OVERVIEW (Auto-calculated from Section 2 + MasterSchedule) -->
         <fieldset>
           <legend>3. Block Status Overview <span style="color:var(--primary);font-size:0.8em">(Auto-calculated)</span></legend>
-          <p class="hint">This section is automatically calculated from Section 2 data and the Master Schedule.</p>
+          <p class="hint">Click <strong>"Populate Block Status"</strong> above after filling Section 2. Uses Section 2 data + Master Schedule.</p>
           <div id="blockStatusContainer"></div>
         </fieldset>
 
