@@ -273,7 +273,7 @@ function autoCalcBlockStatus() {
       blockData[blockId].weightSum += dur;
       console.log('[autoCalc] OK', blockId, taskName, 'actualQty=' + actualQty, 'overall=' + overallPlanned, 'pct=' + taskPct.toFixed(1) + '%, dur=' + dur);
     } else {
-      console.warn('[autoCalc] SKIP (overallPlanned=0) blockId=' + blockId, ' + taskName, 'overallPlanned=' + overallPlanned);
+      console.warn('[autoCalc] SKIP (overallPlanned=0) blockId=' + blockId + ' ' + taskName + ' overallPlanned=' + overallPlanned);
     }
   });
 
