@@ -71,20 +71,20 @@
           <label>Contractor Activity Summary <textarea id="activitySummary" rows="2" required></textarea></label>
         </fieldset>
 
-        <!-- 2. BLOCK STATUS OVERVIEW -->
+        <!-- 2. BLOCK-WISE WORK PROGRESS -->
         <fieldset>
-          <legend>2. Block Status Overview</legend>
-          <p class="hint">Set the current status for each block. Performance details go to Section 13.</p>
-          <div id="blockStatusContainer"></div>
-        </fieldset>
-
-        <!-- 3. BLOCK-WISE WORK PROGRESS -->
-        <fieldset>
-          <legend>3. Block-Wise Work Progress</legend>
+          <legend>2. Block-Wise Work Progress</legend>
           <div id="workProgressContainer">
             <p class="hint">Select a site first to load blocks and scheduled tasks.</p>
           </div>
           <button type="button" id="addTaskRow" class="btn-sm">+ Add Task Row</button>
+        </fieldset>
+
+        <!-- 3. BLOCK STATUS OVERVIEW (Auto-calculated from Section 2 + MasterSchedule) -->
+        <fieldset>
+          <legend>3. Block Status Overview <span style="color:var(--primary);font-size:0.8em">(Auto-calculated)</span></legend>
+          <p class="hint">This section is automatically calculated from Section 2 data and the Master Schedule.</p>
+          <div id="blockStatusContainer"></div>
         </fieldset>
 
         <!-- 4. WORKFORCE AVAILABILITY -->
