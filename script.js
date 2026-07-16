@@ -1,5 +1,5 @@
 /* Version 4.1 */
-const API_BASE = 'https://script.google.com/macros/s/AKfycbz11Ck85u2lDwj8F-gAGaf4bW6q5o-1ZDmZWm8qE4_9v-tGF8StT6nV7gAuAafzcing/exec';
+const API_BASE = 'https://script.google.com/macros/s/AKfycbxKF7oU9rDiTi9oGeMZ6qvsxbI57sMb5GGICI9cmUUjxyXU1OmjmJHyIGCQ7nJlNQ1p/exec';
 let currentBlocks = [];
 let currentTasks = {};
 let currentLaborTypes = [];
@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('dailyForm').addEventListener('submit', handleSubmit);
   document.getElementById('reportDate').valueAsDate = new Date();
+  document.getElementById('reportDate').addEventListener('change', () => { clearTimeout(_autoCalcTimer); _autoCalcTimer = setTimeout(() => autoCalcBlockStatus(), 300); });
   document.getElementById('photos').addEventListener('change', onPhotosSelected);
 
   ['issuesTable', 'testsTable', 'correspondencesTable', 'safetyTable',
@@ -139,7 +140,6 @@ async function onSiteChange() {
   try {
     const bRes = await fetch(API_BASE + '?endpoint=blocks&site=' + encodeURIComponent(site));
     currentBlocks = await bRes.json();
-    renderBlockStatus();
 
     blockOptionsHTML = currentBlocks.map(b =>
       '<option value="' + b.blockId + '">' + b.blockId + ' - ' + b.blockName + '</option>'
@@ -147,7 +147,8 @@ async function onSiteChange() {
 
     const tRes = await fetch(API_BASE + '?endpoint=tasks&site=' + encodeURIComponent(site));
     currentTasks = await tRes.json();
-    renderWorkProgress();
+    renderWorkProgress();     // Section 2: RE fills this first
+    autoCalcBlockStatus();    // Section 3: Auto-calculated from Section 2 + schedule
 
     const lRes = await fetch(API_BASE + '?endpoint=laborTypes&site=' + encodeURIComponent(site));
     currentLaborTypes = await lRes.json();
@@ -158,28 +159,127 @@ async function onSiteChange() {
   } catch (e) { console.error(e); }
 }
 
-// ========== BLOCK STATUS ==========
+// ========== BLOCK STATUS (AUTO-CALCULATED — Section 3) ==========
 
-function renderBlockStatus() {
-  const c = document.getElementById('blockStatusContainer');
-  if (currentBlocks.length === 0) {
-    c.innerHTML = '<p class="hint">No blocks configured for this site.</p>';
-    return;
+let _autoCalcTimer = null;
+
+// Robust date parser — handles 'yyyy-MM-dd', 'Mon 06/01/26', '6/1/2026', Date objects
+function parseScheduleDate(val) {
+  if (!val) return null;
+  if (val instanceof Date) return val;
+  const s = String(val).trim();
+  // Try ISO format first (what Code.gs sends)
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) return new Date(parseInt(iso[1]), parseInt(iso[2]) - 1, parseInt(iso[3]));
+  // Try 'Mon 06/01/26' or '06/01/26' or '6/1/2026'
+  const parts = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (parts) {
+    let yr = parseInt(parts[3]);
+    if (yr < 100) yr += 2000;  // '26' → 2026
+    return new Date(yr, parseInt(parts[1]) - 1, parseInt(parts[2]));
   }
-  let html = '<div class="block-status-grid">';
-  currentBlocks.forEach(b => {
-    html += '<div class="block-status-item">' +
-      '<div class="block-label">' + b.blockId + ' - ' + b.blockName + '</div>' +
-      '<label>Status <select class="bs-status" data-block="' + b.blockId + '">' +
-      '<option>Not Active</option><option>On Progress</option><option>Delayed</option><option>On Track</option><option>Completed</option>' +
-      '</select></label></div>';
-  });
-  html += '</div>';
-  c.innerHTML = html;
-  renderPerformance();
+  // Fallback: native parser
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
 }
 
-// ========== WORK PROGRESS ==========
+function autoCalcBlockStatus() {
+  const c = document.getElementById('blockStatusContainer');
+  const reportDateStr = document.getElementById('reportDate').value;
+  if (!reportDateStr || !currentBlocks.length) {
+    c.innerHTML = '<p class="hint">Select a site and enter report date to calculate.</p>';
+    return;
+  }
+  const reportDate = parseScheduleDate(reportDateStr);
+  if (!reportDate) {
+    c.innerHTML = '<p class="hint" style="color:var(--danger)">Invalid report date.</p>';
+    return;
+  }
+
+  // Read all work progress rows from Section 2
+  const taskRows = document.querySelectorAll('#taskTable tbody tr');
+  const blockData = {};  // blockId -> { plannedDays, totalDays, actualWeightedPct, taskCount }
+
+  // Initialize block data from MasterSchedule (currentTasks)
+  currentBlocks.forEach(b => {
+    const tasks = currentTasks[b.blockId] || [];
+    let totalDays = 0, elapsedDays = 0;
+    tasks.forEach(t => {
+      const dur = parseInt(t.duration) || 0;
+      totalDays += dur;
+      const start = parseScheduleDate(t.start);
+      const finish = parseScheduleDate(t.finish);
+      if (start && !isNaN(start.getTime())) {
+        if (reportDate >= start) {
+          if (finish && !isNaN(finish.getTime()) && reportDate > finish) {
+            elapsedDays += dur;  // task should be complete
+          } else {
+            const daysPassed = Math.floor((reportDate - start) / 86400000) + 1;
+            elapsedDays += Math.min(daysPassed, dur);
+          }
+        }
+      }
+    });
+    blockData[b.blockId] = { totalDays, elapsedDays, actualSum: 0, weightSum: 0, taskCount: tasks.length };
+  });
+
+  // Accumulate actual progress from work progress rows
+  taskRows.forEach(row => {
+    const blockId = row.querySelector('.task-block')?.value || row.dataset.block || '';
+    const taskName = row.querySelector('.task-name')?.value || row.querySelector('.task-name-text')?.value || '';
+    const cumulativeInput = row.querySelector('.task-cumulative');
+    const cumulative = parseFloat(cumulativeInput?.value) || 0;
+
+    if (!blockId || !cumulativeInput) return;
+
+    // Find matching task in schedule to get overallPlannedQty and duration
+    const tasks = currentTasks[blockId] || [];
+    const match = tasks.find(t => t.name === taskName);
+    if (match && match.overallPlannedQty > 0) {
+      const dur = parseInt(match.duration) || 1;
+      const taskPct = Math.min((cumulative / match.overallPlannedQty) * 100, 100);
+      if (blockData[blockId]) {
+        blockData[blockId].actualSum += taskPct * dur;
+        blockData[blockId].weightSum += dur;
+      }
+    }
+  });
+
+  // Render block status table
+  let html = '<table style="width:100%;font-size:0.88em;border-collapse:collapse">' +
+    '<tr style="background:var(--primary);color:#fff"><th>Block</th><th>Planned %</th><th>Actual %</th><th>Target Achievement %</th><th>Status</th><th>Performance</th></tr>';
+
+  currentBlocks.forEach(b => {
+    const d = blockData[b.blockId] || { totalDays: 0, elapsedDays: 0, actualSum: 0, weightSum: 0 };
+    const plannedPct = d.totalDays > 0 ? ((d.elapsedDays / d.totalDays) * 100) : 0;
+    const actualPct = d.weightSum > 0 ? (d.actualSum / d.weightSum) : 0;
+    const targetAch = plannedPct > 0 ? ((actualPct / plannedPct) * 100) : (actualPct > 0 ? 100 : 0);
+
+    let status, perf;
+    if (actualPct >= 100) { status = 'Completed'; perf = 'Complete'; }
+    else if (targetAch >= 95) { status = 'On Track'; perf = 'On Schedule'; }
+    else if (targetAch >= 70) { status = 'Delayed'; perf = 'Slightly Behind'; }
+    else if (actualPct > 0) { status = 'Delayed'; perf = 'Behind Schedule'; }
+    else if (plannedPct > 0) { status = 'Delayed'; perf = 'Not Started (Should Have)'; }
+    else { status = 'Not Active'; perf = 'Not Yet Due'; }
+
+    const achColor = targetAch >= 95 ? 'var(--success)' : targetAch >= 70 ? 'var(--warn)' : 'var(--danger)';
+    const statusColor = status === 'Completed' ? 'var(--success)' : status === 'On Track' ? 'var(--success)' : status === 'Delayed' ? 'var(--danger)' : 'var(--text)';
+
+    html += '<tr style="border-bottom:1px solid var(--border)">' +
+      '<td><strong>' + b.blockId + '</strong> - ' + (b.blockName || '') + '</td>' +
+      '<td>' + plannedPct.toFixed(1) + '%</td>' +
+      '<td>' + actualPct.toFixed(1) + '%</td>' +
+      '<td style="font-weight:700;color:' + achColor + '">' + targetAch.toFixed(1) + '%</td>' +
+      '<td style="color:' + statusColor + ';font-weight:600">' + status + '</td>' +
+      '<td>' + perf + '</td></tr>';
+  });
+
+  html += '</table>';
+  c.innerHTML = html;
+}
+
+// ========== WORK PROGRESS (Section 2 — RE enters data here) ==========
 
 function renderWorkProgress() {
   const c = document.getElementById('workProgressContainer');
@@ -187,7 +287,7 @@ function renderWorkProgress() {
     c.innerHTML = '<p class="hint">No blocks configured.</p>';
     return;
   }
-  let html = '<table id="taskTable"><thead><tr><th>#</th><th>Block</th><th>Task</th><th>Unit</th><th>Planned</th><th>Executed</th><th>Remarks</th></tr></thead><tbody>';
+  let html = '<table id="taskTable"><thead><tr><th>#</th><th>Block</th><th>Task</th><th>Unit</th><th>Daily Planned</th><th>Daily Executed</th><th>Daily %</th><th>Cumulative</th><th>Overall %</th><th>Remarks</th></tr></thead><tbody>';
   let counter = 0;
   currentBlocks.forEach((b) => {
     const blockTasks = currentTasks[b.blockId] || [];
@@ -198,10 +298,13 @@ function renderWorkProgress() {
           '<td>' + counter + '</td>' +
           '<td><select class="task-block" disabled><option value="' + b.blockId + '" selected>' + b.blockId + '</option></select></td>' +
           '<td><select class="task-name"><option value="' + t.name + '" selected>' + t.name + '</option></select></td>' +
-          '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" readonly style="width:60px"></td>' +
+          '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" readonly style="width:50px"></td>' +
           '<td><input type="number" class="task-planned" step="any" value="' + (t.dailyPlannedQty || '') + '" style="width:70px"></td>' +
-          '<td><input type="number" class="task-executed" step="any" style="width:70px"></td>' +
-          '<td><input type="text" class="task-remark" style="width:100px"></td></tr>';
+          '<td><input type="number" class="task-executed" step="any" style="width:70px" data-block="' + b.blockId + '" data-overall="' + (t.overallPlannedQty || 0) + '"></td>' +
+          '<td class="task-daily-pct" style="width:55px;text-align:center">-</td>' +
+          '<td><input type="number" class="task-cumulative" step="any" style="width:80px" placeholder="Cumul." data-block="' + b.blockId + '" data-overall="' + (t.overallPlannedQty || 0) + '"></td>' +
+          '<td class="task-overall-pct" style="width:55px;text-align:center">-</td>' +
+          '<td><input type="text" class="task-remark" style="width:90px"></td></tr>';
       });
     } else {
       counter++;
@@ -209,14 +312,43 @@ function renderWorkProgress() {
         '<td>' + counter + '</td>' +
         '<td><select class="task-block">' + blockOptionsHTML + '</select></td>' +
         '<td><input type="text" class="task-name-text" placeholder="Task description"></td>' +
-        '<td><input type="text" class="task-unit" placeholder="m3" style="width:60px"></td>' +
+        '<td><input type="text" class="task-unit" placeholder="m3" style="width:50px"></td>' +
         '<td><input type="number" class="task-planned" step="any" style="width:70px"></td>' +
-        '<td><input type="number" class="task-executed" step="any" style="width:70px"></td>' +
-        '<td><input type="text" class="task-remark" style="width:100px"></td></tr>';
+        '<td><input type="number" class="task-executed" step="any" style="width:70px" data-block="' + b.blockId + '" data-overall="0"></td>' +
+        '<td class="task-daily-pct" style="width:55px;text-align:center">-</td>' +
+        '<td><input type="number" class="task-cumulative" step="any" style="width:80px" placeholder="Cumul." data-block="' + b.blockId + '" data-overall="0"></td>' +
+        '<td class="task-overall-pct" style="width:55px;text-align:center">-</td>' +
+        '<td><input type="text" class="task-remark" style="width:90px"></td></tr>';
     }
   });
   html += '</tbody></table>';
   c.innerHTML = html;
+
+  // Add live calculation listeners
+  document.querySelectorAll('.task-executed, .task-cumulative').forEach(inp => {
+    inp.addEventListener('input', onTaskInputChanged);
+  });
+}
+
+function onTaskInputChanged() {
+  // Update Daily % and Overall % for the changed row
+  const row = this.closest('tr');
+  if (!row) return;
+  const planned = parseFloat(row.querySelector('.task-planned')?.value) || 0;
+  const executed = parseFloat(row.querySelector('.task-executed')?.value) || 0;
+  const cumulative = parseFloat(row.querySelector('.task-cumulative')?.value) || 0;
+  const overall = parseFloat(this.dataset.overall) || 0;
+
+  const dailyCell = row.querySelector('.task-daily-pct');
+  const overallCell = row.querySelector('.task-overall-pct');
+  if (planned > 0) dailyCell.textContent = ((executed / planned) * 100).toFixed(1) + '%';
+  else dailyCell.textContent = '-';
+  if (overall > 0) overallCell.textContent = ((cumulative / overall) * 100).toFixed(1) + '%';
+  else overallCell.textContent = '-';
+
+  // Debounced re-calculation of Block Status (Section 3)
+  clearTimeout(_autoCalcTimer);
+  _autoCalcTimer = setTimeout(() => autoCalcBlockStatus(), 300);
 }
 
 function addGenericRow() {
@@ -224,13 +356,21 @@ function addGenericRow() {
   if (!tbody) return;
   const count = tbody.rows.length + 1;
   const row = tbody.insertRow();
+  row.dataset.block = '';
   row.innerHTML = '<td>' + count + '</td>' +
     '<td><select class="task-block">' + blockOptionsHTML + '</select></td>' +
     '<td><input type="text" class="task-name-text" placeholder="Task description"></td>' +
-    '<td><input type="text" class="task-unit" placeholder="m3" style="width:60px"></td>' +
+    '<td><input type="text" class="task-unit" placeholder="m3" style="width:50px"></td>' +
     '<td><input type="number" class="task-planned" step="any" style="width:70px"></td>' +
-    '<td><input type="number" class="task-executed" step="any" style="width:70px"></td>' +
-    '<td><input type="text" class="task-remark" style="width:100px"></td>';
+    '<td><input type="number" class="task-executed" step="any" style="width:70px" data-block="" data-overall="0"></td>' +
+    '<td class="task-daily-pct" style="width:55px;text-align:center">-</td>' +
+    '<td><input type="number" class="task-cumulative" step="any" style="width:80px" placeholder="Cumul." data-block="" data-overall="0"></td>' +
+    '<td class="task-overall-pct" style="width:55px;text-align:center">-</td>' +
+    '<td><input type="text" class="task-remark" style="width:90px"></td>';
+  // Attach listeners to new inputs
+  row.querySelectorAll('.task-executed, .task-cumulative').forEach(inp => {
+    inp.addEventListener('input', onTaskInputChanged);
+  });
 }
 
 // ========== WORKFORCE ==========
@@ -366,10 +506,28 @@ function onPhotosSelected(e) {
 // ========== COLLECT DATA ==========
 
 function collectBlockStatuses() {
-  return Array.from(document.querySelectorAll('.bs-status')).map(sel => ({
-    blockId: sel.dataset.block,
-    status: sel.value
-  }));
+  // Read from auto-calculated Section 3 table
+  const rows = document.querySelectorAll('#blockStatusContainer table tr');
+  const statuses = [];
+  rows.forEach((row, i) => {
+    if (i === 0) return; // skip header
+    const cells = row.querySelectorAll('td');
+    if (cells.length >= 6) {
+      const blockLabel = cells[0].textContent.trim();
+      const blockId = blockLabel.split(' - ')[0].trim();
+      const targetAch = cells[3].textContent.trim();
+      const perfStatus = cells[5].textContent.trim();
+      if (blockId) {
+        statuses.push({
+          blockId,
+          status: cells[4].textContent.trim(),
+          targetAchievement: targetAch,
+          perfStatus
+        });
+      }
+    }
+  });
+  return statuses;
 }
 
 function collectTasks() {
@@ -381,6 +539,7 @@ function collectTasks() {
     const taskInput = row.querySelector('.task-name-text');
     const name = taskSel ? taskSel.value : (taskInput ? taskInput.value : '');
     const exec = row.querySelector('.task-executed');
+    const cumul = row.querySelector('.task-cumulative');
     if (name && exec && exec.value) {
       tasks.push({
         blockId: blockSel ? blockSel.value : '',
@@ -388,6 +547,7 @@ function collectTasks() {
         unit: row.querySelector('.task-unit') ? row.querySelector('.task-unit').value : '',
         plannedQty: parseFloat(row.querySelector('.task-planned')?.value) || 0,
         executedQty: parseFloat(exec.value) || 0,
+        cumulativeQty: cumul ? (parseFloat(cumul.value) || 0) : 0,
         remark: row.querySelector('.task-remark') ? row.querySelector('.task-remark').value : ''
       });
     }
