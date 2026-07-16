@@ -1,5 +1,5 @@
 /* Version 4.1 */
-const API_BASE = 'https://script.google.com/macros/s/AKfycbxKF7oU9rDiTi9oGeMZ6qvsxbI57sMb5GGICI9cmUUjxyXU1OmjmJHyIGCQ7nJlNQ1p/exec';
+const API_BASE = 'https://script.google.com/macros/s/AKfycbxH3FRKSReHNrjUb_fIbnKsk6htgBhMwO6Mq3Al3cI_z710cMPc7XNGcw7Qb3IGKc0e/exec';
 let currentBlocks = [];
 let currentTasks = {};
 let currentLaborTypes = [];
@@ -224,24 +224,34 @@ function autoCalcBlockStatus() {
   });
 
   // Accumulate actual progress from work progress rows
+  console.log('[autoCalc] Reading', taskRows.length, 'task rows, reportDate:', reportDateStr);
   taskRows.forEach(row => {
     const blockId = row.querySelector('.task-block')?.value || row.dataset.block || '';
     const taskName = row.querySelector('.task-name')?.value || row.querySelector('.task-name-text')?.value || '';
     const cumulativeInput = row.querySelector('.task-cumulative');
     const cumulative = parseFloat(cumulativeInput?.value) || 0;
 
-    if (!blockId || !cumulativeInput) return;
+    if (!blockId || cumulative <= 0) return;
 
     // Find matching task in schedule to get overallPlannedQty and duration
     const tasks = currentTasks[blockId] || [];
     const match = tasks.find(t => t.name === taskName);
-    if (match && match.overallPlannedQty > 0) {
-      const dur = parseInt(match.duration) || 1;
-      const taskPct = Math.min((cumulative / match.overallPlannedQty) * 100, 100);
-      if (blockData[blockId]) {
-        blockData[blockId].actualSum += taskPct * dur;
-        blockData[blockId].weightSum += dur;
-      }
+
+    // Fallback: if overallPlannedQty is 0, compute from dailyPlannedQty * duration
+    let overallPlanned = match ? (match.overallPlannedQty || 0) : 0;
+    if (match && overallPlanned <= 0 && (match.dailyPlannedQty > 0) && (match.duration > 0)) {
+      overallPlanned = match.dailyPlannedQty * match.duration;
+      console.log('[autoCalc] Fallback: ' + taskName + ' overall=' + overallPlanned + ' (daily=' + match.dailyPlannedQty + ' x dur=' + match.duration + ')');
+    }
+
+    if (overallPlanned > 0 && blockData[blockId]) {
+      const dur = parseInt(match?.duration) || 1;
+      const taskPct = Math.min((cumulative / overallPlanned) * 100, 100);
+      blockData[blockId].actualSum += taskPct * dur;
+      blockData[blockId].weightSum += dur;
+      console.log('[autoCalc]', blockId, taskName, 'cumul=' + cumulative, 'overall=' + overallPlanned, 'pct=' + taskPct.toFixed(1) + '%');
+    } else if (cumulative > 0) {
+      console.warn('[autoCalc] SKIP', blockId, taskName, 'cumul=' + cumulative, 'overallPlanned=' + overallPlanned, 'match=' + !!match);
     }
   });
 
@@ -540,14 +550,17 @@ function collectTasks() {
     const name = taskSel ? taskSel.value : (taskInput ? taskInput.value : '');
     const exec = row.querySelector('.task-executed');
     const cumul = row.querySelector('.task-cumulative');
-    if (name && exec && exec.value) {
+    const execVal = exec ? (parseFloat(exec.value) || 0) : 0;
+    const cumulVal = cumul ? (parseFloat(cumul.value) || 0) : 0;
+    // Collect task if it has a name AND (executed OR cumulative) value
+    if (name && (execVal > 0 || cumulVal > 0)) {
       tasks.push({
         blockId: blockSel ? blockSel.value : '',
         name,
         unit: row.querySelector('.task-unit') ? row.querySelector('.task-unit').value : '',
         plannedQty: parseFloat(row.querySelector('.task-planned')?.value) || 0,
-        executedQty: parseFloat(exec.value) || 0,
-        cumulativeQty: cumul ? (parseFloat(cumul.value) || 0) : 0,
+        executedQty: execVal,
+        cumulativeQty: cumulVal,
         remark: row.querySelector('.task-remark') ? row.querySelector('.task-remark').value : ''
       });
     }
