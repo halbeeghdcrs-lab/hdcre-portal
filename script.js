@@ -1,5 +1,5 @@
 /* Version 4.1 */
-const API_BASE = 'https://script.google.com/macros/s/AKfycbxH3FRKSReHNrjUb_fIbnKsk6htgBhMwO6Mq3Al3cI_z710cMPc7XNGcw7Qb3IGKc0e/exec';
+const API_BASE = 'https://script.google.com/macros/s/AKfycbwaWiQGo17E3I4PAN-gNEvEBFRgw5TMpcfBifIIkPddqdvyPgD1iAlqsoU2VDAnfY1J/exec';
 let currentBlocks = [];
 let currentTasks = {};
 let currentLaborTypes = [];
@@ -632,6 +632,8 @@ function collectPhotosWithMeta() {
   })));
 }
 
+const DRAFT_EXPIRY_MS = 48 * 60 * 60 * 1000; // 48 hours
+
 // ========== DRAFT SAVE / LOAD ==========
 
 function saveDraft() {
@@ -667,7 +669,20 @@ function saveDraft() {
 
   try {
     localStorage.setItem('hdcre_draft_' + site, JSON.stringify(draftData));
+    // Update save indicator
+    const indicator = document.getElementById('draftSaveIndicator');
+    if (indicator) {
+      indicator.textContent = 'Draft saved: ' + new Date().toLocaleTimeString();
+      indicator.style.opacity = '1';
+      setTimeout(() => { indicator.style.opacity = '0'; }, 3000);
+    }
   } catch (e) { console.warn('Draft save failed:', e); }
+}
+
+function isDraftExpired(draft) {
+  if (!draft || !draft.timestamp) return true;
+  const savedAt = new Date(draft.timestamp).getTime();
+  return (Date.now() - savedAt) > DRAFT_EXPIRY_MS;
 }
 
 function checkForDraft(site) {
@@ -676,9 +691,26 @@ function checkForDraft(site) {
     const raw = localStorage.getItem('hdcre_draft_' + site);
     if (!raw) return;
     const draft = JSON.parse(raw);
-    const banner = document.getElementById('draftBanner');
+
+    // Check expiry
+    if (isDraftExpired(draft)) {
+      console.log('[Draft] Expired draft found, auto-cleaning for site:', site);
+      localStorage.removeItem('hdcre_draft_' + site);
+      return;
+    }
+
     const timeStr = draft.timestamp ? new Date(draft.timestamp).toLocaleString() : '';
-    banner.innerHTML = '<strong>Draft found</strong> (saved ' + timeStr + ') - ' +
+    // Calculate remaining time
+    const savedAt = new Date(draft.timestamp).getTime();
+    const remainingMs = DRAFT_EXPIRY_MS - (Date.now() - savedAt);
+    const remainingHrs = Math.floor(remainingMs / 3600000);
+    const remainingMins = Math.floor((remainingMs % 3600000) / 60000);
+    const expiryHint = remainingHrs > 0
+      ? remainingHrs + 'h ' + remainingMins + 'm remaining'
+      : remainingMins + 'm remaining';
+
+    const banner = document.getElementById('draftBanner');
+    banner.innerHTML = '<strong>Draft found</strong> (saved ' + timeStr + ', ' + expiryHint + ') - ' +
       '<a href="#" id="restoreDraftBtn" style="color:#00695C;font-weight:700">Restore Draft</a> | ' +
       '<a href="#" id="dismissDraftBtn" style="color:#C44536">Dismiss</a>';
     banner.classList.remove('hidden');
