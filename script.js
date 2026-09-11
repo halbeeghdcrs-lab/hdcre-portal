@@ -85,12 +85,12 @@ function attemptLogin() {
       } else if (d.success) {
         err.textContent = 'Login OK but no role assigned. Ask admin to set your Role.';
       } else {
-        err.textContent = 'Invalid name or password.';
+        err.textContent = 'Invalid name or password. Make sure your account exists in Staff_Accounts sheet with Role = RE.';
       }
     })
     .catch(e => {
       if (e.message.includes('Failed to fetch')) {
-        err.textContent = 'Network error. Check API_BASE URL.';
+        err.textContent = 'Network error — cannot reach backend. Check that Code.gs is deployed and API_BASE URL is correct.';
       } else {
         err.textContent = 'Error: ' + e.message;
       }
