@@ -1,5 +1,5 @@
-/* Version 4.1 */
-const API_BASE = 'https://script.google.com/macros/s/AKfycbwaWiQGo17E3I4PAN-gNEvEBFRgw5TMpcfBifIIkPddqdvyPgD1iAlqsoU2VDAnfY1J/exec';
+/* Version 5.0 */
+const API_BASE = 'https://script.google.com/macros/s/AKfycbxUWdMaOYIZ51kKQwJe8aPE5VW81lFA-Owzw6oQZWeSThld7t8eNC1ejEbfU-ik1Y2X/exec';
 let currentBlocks = [];
 let currentTasks = {};
 let currentLaborTypes = [];
@@ -473,13 +473,15 @@ function addDynamicRow(tableId) {
     case 'testsTable':
       row.innerHTML = '<td><input type="text" placeholder="Test name"></td>' +
         '<td><select>' + blockOptionsHTML + '</select></td>' +
-        '<td><input type="text" placeholder="Result"></td>';
+        '<td><input type="text" placeholder="Result"></td>' +
+        '<td><input type="file" accept="image/*" class="row-photo" data-section="tests" onchange="previewRowPhoto(this)"></td>';
       break;
     case 'correspondencesTable':
       row.innerHTML = '<td><input type="date"></td>' +
         '<td><input type="text" placeholder="From"></td>' +
         '<td><input type="text" placeholder="To"></td>' +
-        '<td><input type="text" placeholder="Subject"></td>';
+        '<td><input type="text" placeholder="Subject"></td>' +
+        '<td><input type="file" accept="image/*" class="row-photo" data-section="correspondences" onchange="previewRowPhoto(this)"></td>';
       break;
     case 'safetyTable':
       row.innerHTML = '<td><input type="text" placeholder="Safety issue"></td>' +
@@ -494,9 +496,44 @@ function addDynamicRow(tableId) {
       row.innerHTML = '<td><input type="text" placeholder="Order No."></td>' +
         '<td><input type="text" placeholder="Issued To"></td>' +
         '<td><textarea rows="1" placeholder="Instruction"></textarea></td>' +
-        '<td><input type="date"></td>';
+        '<td><input type="date"></td>' +
+        '<td><input type="file" accept="image/*" class="row-photo" data-section="siteOrders" onchange="previewRowPhoto(this)"></td>';
       break;
   }
+}
+
+// ========== ROW-LEVEL PHOTO PREVIEW (Sections 9, 10, 14) ==========
+
+function previewRowPhoto(inputEl) {
+  const file = inputEl.files[0];
+  if (!file) return;
+  // Remove any existing preview in this cell
+  let cell = inputEl.parentElement;
+  let oldPreview = cell.querySelector('.row-photo-preview');
+  if (oldPreview) oldPreview.remove();
+  // Show thumbnail
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    const img = document.createElement('img');
+    img.src = ev.target.result;
+    img.className = 'row-photo-preview';
+    img.style.cssText = 'max-width:80px;max-height:60px;border-radius:4px;margin-top:4px;border:1px solid #ccc;';
+    cell.appendChild(img);
+  };
+  reader.readAsDataURL(file);
+}
+
+// Collect all row-level photos from a table as base64 array
+function collectRowPhotos(tableId) {
+  const photos = [];
+  const inputs = document.querySelectorAll('#' + tableId + ' .row-photo');
+  inputs.forEach(function(input) {
+    if (input.files && input.files[0]) {
+      // We'll store the file reference; conversion happens at submit time
+      photos.push({ file: input.files[0], section: input.dataset.section });
+    }
+  });
+  return photos;
 }
 
 // ========== PHOTOS ==========
@@ -632,8 +669,6 @@ function collectPhotosWithMeta() {
   })));
 }
 
-const DRAFT_EXPIRY_MS = 48 * 60 * 60 * 1000; // 48 hours
-
 // ========== DRAFT SAVE / LOAD ==========
 
 function saveDraft() {
@@ -669,20 +704,7 @@ function saveDraft() {
 
   try {
     localStorage.setItem('hdcre_draft_' + site, JSON.stringify(draftData));
-    // Update save indicator
-    const indicator = document.getElementById('draftSaveIndicator');
-    if (indicator) {
-      indicator.textContent = 'Draft saved: ' + new Date().toLocaleTimeString();
-      indicator.style.opacity = '1';
-      setTimeout(() => { indicator.style.opacity = '0'; }, 3000);
-    }
   } catch (e) { console.warn('Draft save failed:', e); }
-}
-
-function isDraftExpired(draft) {
-  if (!draft || !draft.timestamp) return true;
-  const savedAt = new Date(draft.timestamp).getTime();
-  return (Date.now() - savedAt) > DRAFT_EXPIRY_MS;
 }
 
 function checkForDraft(site) {
@@ -691,26 +713,9 @@ function checkForDraft(site) {
     const raw = localStorage.getItem('hdcre_draft_' + site);
     if (!raw) return;
     const draft = JSON.parse(raw);
-
-    // Check expiry
-    if (isDraftExpired(draft)) {
-      console.log('[Draft] Expired draft found, auto-cleaning for site:', site);
-      localStorage.removeItem('hdcre_draft_' + site);
-      return;
-    }
-
-    const timeStr = draft.timestamp ? new Date(draft.timestamp).toLocaleString() : '';
-    // Calculate remaining time
-    const savedAt = new Date(draft.timestamp).getTime();
-    const remainingMs = DRAFT_EXPIRY_MS - (Date.now() - savedAt);
-    const remainingHrs = Math.floor(remainingMs / 3600000);
-    const remainingMins = Math.floor((remainingMs % 3600000) / 60000);
-    const expiryHint = remainingHrs > 0
-      ? remainingHrs + 'h ' + remainingMins + 'm remaining'
-      : remainingMins + 'm remaining';
-
     const banner = document.getElementById('draftBanner');
-    banner.innerHTML = '<strong>Draft found</strong> (saved ' + timeStr + ', ' + expiryHint + ') - ' +
+    const timeStr = draft.timestamp ? new Date(draft.timestamp).toLocaleString() : '';
+    banner.innerHTML = '<strong>Draft found</strong> (saved ' + timeStr + ') - ' +
       '<a href="#" id="restoreDraftBtn" style="color:#00695C;font-weight:700">Restore Draft</a> | ' +
       '<a href="#" id="dismissDraftBtn" style="color:#C44536">Dismiss</a>';
     banner.classList.remove('hidden');
