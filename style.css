@@ -1,4 +1,4 @@
-/* Version 4.1 */
+/* Version 5.0 */
 :root {
   --primary: #00695C;
   --primary-dark: #004D40;
@@ -54,6 +54,18 @@ body {
   color: #777;
   font-style: italic;
   margin: 0 0 1rem;
+}
+.login-label {
+  display: block;
+  text-align: left;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 0.25rem;
+  margin-top: 0.5rem;
+}
+.login-label:first-of-type {
+  margin-top: 0;
 }
 .login-box input {
   margin-bottom: 0.8rem;
