@@ -1,5 +1,5 @@
 /* Version 5.0 */
-const API_BASE = 'https://script.google.com/macros/s/AKfycbxH3FRKSReHNrjUb_fIbnKsk6htgBhMwO6Mq3Al3cI_z710cMPc7XNGcw7Qb3IGKc0e/exec';
+const API_BASE = 'https://script.google.com/macros/s/AKfycbzurS6Ybn_a-65QQrWBCcUxSX8LPPVNAg5jn_kJAxNGmBiq0mypX21yXrSxM2toWNTO/exec';
 let currentBlocks = [];
 let currentTasks = {};
 let currentLaborTypes = [];
