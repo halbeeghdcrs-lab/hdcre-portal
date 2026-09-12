@@ -1,4 +1,4 @@
-/* Version 5.0 */
+/* Version 5.1 */
 const API_BASE = 'https://script.google.com/macros/s/AKfycbzurS6Ybn_a-65QQrWBCcUxSX8LPPVNAg5jn_kJAxNGmBiq0mypX21yXrSxM2toWNTO/exec';
 let currentBlocks = [];
 let currentTasks = {};
@@ -54,13 +54,13 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('cancelEditBtn').addEventListener('click', cancelEdit);
 });
 
-// ========== LOGIN ==========
+// ========== LOGIN (robust V5.1) ==========
 
 function attemptLogin() {
   const name = document.getElementById('loginName').value.trim();
-  const pw = document.getElementById('loginPassword').value.trim();
-  const err = document.getElementById('loginError');
-  const btn = document.getElementById('loginBtn');
+  const pw   = document.getElementById('loginPassword').value.trim();
+  const err  = document.getElementById('loginError');
+  const btn  = document.getElementById('loginBtn');
   err.textContent = '';
   err.style.color = '#e74c3c';
   if (!name || !pw) { err.textContent = 'Please enter both Name and Password.'; return; }
@@ -68,29 +68,65 @@ function attemptLogin() {
   btn.disabled = true;
   btn.textContent = 'Checking...';
 
-  const url = API_BASE + '?action=login&name=' + encodeURIComponent(name) + '&password=' + encodeURIComponent(pw);
+  const url = API_BASE + '?action=login&name=' + encodeURIComponent(name) +
+              '&password=' + encodeURIComponent(pw);
 
   fetch(url)
     .then(r => {
       if (!r.ok) throw new Error('Server returned ' + r.status);
-      return r.json();
+      return r.text();
     })
-    .then(d => {
+    .then(text => {
+      let d;
+      try { d = JSON.parse(text); }
+      catch (e) {
+        throw new Error('Backend did not return JSON. Raw response: ' + text.slice(0, 200));
+      }
+
       if (d.success && d.role === 'RE') {
         sessionStorage.setItem('hdcre_user', name);
         sessionStorage.setItem('hdcre_role', d.role);
         showMainApp(name);
-      } else if (d.success && d.role) {
-        err.textContent = 'Access denied. Your role is: ' + d.role + '. This portal is for Resident Engineers only.';
-      } else if (d.success) {
-        err.textContent = 'Login OK but no role assigned. Ask admin to set your Role.';
-      } else {
-        err.textContent = 'Invalid name or password. Make sure your account exists in Staff_Accounts sheet with Role = RE.';
+        return;
       }
+
+      if (d.success && d.role) {
+        err.textContent = 'Access denied. Your role is "' + d.role +
+          '" (raw: "' + (d.roleRaw || '?') + '"). This portal is for Resident Engineers only.';
+        return;
+      }
+
+      if (d.success) {
+        err.textContent = 'Login OK but no Role assigned. Ask the admin to set your Role to "RE".';
+        return;
+      }
+
+      // Build a helpful diagnostic message
+      let msg = 'Login failed. ';
+      switch (d.reason) {
+        case 'SHEET_NOT_FOUND':
+          msg += 'No staff sheet found. Tried: ' + (d.triedSheets || []).join(', ') +
+                 '. Create a sheet named "Staff_Accounts".';
+          break;
+        case 'HEADERS_MISSING':
+          msg += 'Staff sheet headers are wrong. Found: ' + JSON.stringify(d.headers || []) +
+                 '. Expected: Name | Password | Role.';
+          break;
+        case 'NO_MATCH':
+          msg += 'Name/password did not match. Sheet "' + (d.sheetUsed || '?') + '" has ' +
+                 (d.totalRows || 0) + ' data row(s). Names found: ' +
+                 (d.namesSample || []).join(', ') + '.';
+          break;
+        default:
+          msg += (d.message || 'Invalid name or password.') +
+                 ' Make sure your account exists in Staff_Accounts with Role = RE.';
+      }
+      err.textContent = msg;
     })
     .catch(e => {
       if (e.message.includes('Failed to fetch')) {
-        err.textContent = 'Network error — cannot reach backend. Check that Code.gs is deployed and API_BASE URL is correct.';
+        err.textContent = 'Network error — cannot reach backend. Check that Code.gs is deployed ' +
+                          '(as a Web App, "Anyone" access) and API_BASE is the /exec URL.';
       } else {
         err.textContent = 'Error: ' + e.message;
       }
