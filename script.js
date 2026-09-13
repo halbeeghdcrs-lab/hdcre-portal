@@ -1,8 +1,9 @@
-/* Version 5.1 */
-const API_BASE = 'https://script.google.com/macros/s/AKfycbzurS6Ybn_a-65QQrWBCcUxSX8LPPVNAg5jn_kJAxNGmBiq0mypX21yXrSxM2toWNTO/exec';
+/* Version 6.0 */
+const API_BASE = 'https://script.google.com/macros/s/AKfycbzxLQS4aF6XwPzQcy46BGbNQpB_SRHSfS8chos4de_90zTwjZbK2EqELBwmbQS5AReZ/exec';
 let currentBlocks = [];
 let currentTasks = {};
 let currentLaborTypes = [];
+let latestCumulativeMap = {};   // "block||task" -> number
 let blockOptionsHTML = '';
 let editingReportId = null;
 let draftTimer = null;
@@ -21,7 +22,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('siteSelect').addEventListener('change', onSiteChange);
   document.getElementById('addTaskRow').addEventListener('click', addGenericRow);
   document.getElementById('populateBlockStatus').addEventListener('click', () => {
-    console.log('[Button] Populate Block Status clicked');
     autoCalcBlockStatus();
   });
   document.querySelectorAll('.add-row-btn').forEach(btn => {
@@ -36,25 +36,16 @@ document.addEventListener('DOMContentLoaded', () => {
     'stakeholderTable', 'siteOrdersTable', 'equipmentTable',
     'matDeliveredTable', 'matOnSiteTable'].forEach(id => addDynamicRow(id));
 
-  // Tab switching
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
-
-  // Draft auto-save every 30 seconds
   draftTimer = setInterval(saveDraft, 30000);
-
-  // Save draft on any form input
   document.getElementById('dailyForm').addEventListener('input', saveDraft);
-
-  // Modal close button
   document.getElementById('closeViewBtn').addEventListener('click', closeReportView);
-
-  // Cancel edit button
   document.getElementById('cancelEditBtn').addEventListener('click', cancelEdit);
 });
 
-// ========== LOGIN (robust V5.1) ==========
+// ========== LOGIN ==========
 
 function attemptLogin() {
   const name = document.getElementById('loginName').value.trim();
@@ -64,53 +55,38 @@ function attemptLogin() {
   err.textContent = '';
   err.style.color = '#e74c3c';
   if (!name || !pw) { err.textContent = 'Please enter both Name and Password.'; return; }
-
   btn.disabled = true;
   btn.textContent = 'Checking...';
-
   const url = API_BASE + '?action=login&name=' + encodeURIComponent(name) +
               '&password=' + encodeURIComponent(pw);
-
   fetch(url)
-    .then(r => {
-      if (!r.ok) throw new Error('Server returned ' + r.status);
-      return r.text();
-    })
+    .then(r => { if (!r.ok) throw new Error('Server returned ' + r.status); return r.text(); })
     .then(text => {
       let d;
       try { d = JSON.parse(text); }
-      catch (e) {
-        throw new Error('Backend did not return JSON. Raw response: ' + text.slice(0, 200));
-      }
-
+      catch (e) { throw new Error('Backend did not return JSON. Raw response: ' + text.slice(0, 200)); }
       if (d.success && d.role === 'RE') {
         sessionStorage.setItem('hdcre_user', name);
         sessionStorage.setItem('hdcre_role', d.role);
         showMainApp(name);
         return;
       }
-
       if (d.success && d.role) {
         err.textContent = 'Access denied. Your role is "' + d.role +
           '" (raw: "' + (d.roleRaw || '?') + '"). This portal is for Resident Engineers only.';
         return;
       }
-
       if (d.success) {
         err.textContent = 'Login OK but no Role assigned. Ask the admin to set your Role to "RE".';
         return;
       }
-
-      // Build a helpful diagnostic message
       let msg = 'Login failed. ';
       switch (d.reason) {
         case 'SHEET_NOT_FOUND':
-          msg += 'No staff sheet found. Tried: ' + (d.triedSheets || []).join(', ') +
-                 '. Create a sheet named "Staff_Accounts".';
+          msg += 'No staff sheet found. Tried: ' + (d.triedSheets || []).join(', ') + '.';
           break;
         case 'HEADERS_MISSING':
-          msg += 'Staff sheet headers are wrong. Found: ' + JSON.stringify(d.headers || []) +
-                 '. Expected: Name | Password | Role.';
+          msg += 'Staff sheet headers are wrong. Found: ' + JSON.stringify(d.headers || []) + '.';
           break;
         case 'NO_MATCH':
           msg += 'Name/password did not match. Sheet "' + (d.sheetUsed || '?') + '" has ' +
@@ -118,23 +94,18 @@ function attemptLogin() {
                  (d.namesSample || []).join(', ') + '.';
           break;
         default:
-          msg += (d.message || 'Invalid name or password.') +
-                 ' Make sure your account exists in Staff_Accounts with Role = RE.';
+          msg += (d.message || 'Invalid name or password.');
       }
       err.textContent = msg;
     })
     .catch(e => {
       if (e.message.includes('Failed to fetch')) {
-        err.textContent = 'Network error — cannot reach backend. Check that Code.gs is deployed ' +
-                          '(as a Web App, "Anyone" access) and API_BASE is the /exec URL.';
+        err.textContent = 'Network error — cannot reach backend. Check that Code.gs is deployed (Web App, "Anyone" access) and API_BASE is the /exec URL.';
       } else {
         err.textContent = 'Error: ' + e.message;
       }
     })
-    .finally(() => {
-      btn.disabled = false;
-      btn.textContent = 'Login';
-    });
+    .finally(() => { btn.disabled = false; btn.textContent = 'Login'; });
 }
 
 function showMainApp(name) {
@@ -144,11 +115,9 @@ function showMainApp(name) {
   document.getElementById('reName').value = name;
   loadSites();
 }
-
 function logout() { sessionStorage.removeItem('hdcre_user'); sessionStorage.removeItem('hdcre_role'); location.reload(); }
 
-// ========== TAB SWITCHING ==========
-
+// ========== TABS ==========
 function switchTab(tabName) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelector('[data-tab="' + tabName + '"]').classList.add('active');
@@ -180,47 +149,61 @@ async function onSiteChange() {
   try {
     const bRes = await fetch(API_BASE + '?endpoint=blocks&site=' + encodeURIComponent(site));
     currentBlocks = await bRes.json();
-
     blockOptionsHTML = currentBlocks.map(b =>
       '<option value="' + b.blockId + '">' + b.blockId + ' - ' + b.blockName + '</option>'
     ).join('');
 
     const tRes = await fetch(API_BASE + '?endpoint=tasks&site=' + encodeURIComponent(site));
     currentTasks = await tRes.json();
-    renderWorkProgress();     // Section 2: RE fills this first
-    autoCalcBlockStatus();    // Section 3: Auto-calculated from Section 2 + schedule
+
+    // V6.0: fetch latest cumulative per block||task
+    try {
+      const cRes = await fetch(API_BASE + '?endpoint=latestCumulative&site=' + encodeURIComponent(site));
+      latestCumulativeMap = await cRes.json();
+    } catch (e) { latestCumulativeMap = {}; }
+
+    renderWorkProgress();
+    renderPerformance();        // V6.0: was missing
+    autoCalcBlockStatus();
 
     const lRes = await fetch(API_BASE + '?endpoint=laborTypes&site=' + encodeURIComponent(site));
     currentLaborTypes = await lRes.json();
     renderWorkforce();
 
-    // Check for draft
     checkForDraft(site);
   } catch (e) { console.error(e); }
 }
 
-// ========== BLOCK STATUS (AUTO-CALCULATED — Section 3) ==========
+// ========== BLOCK STATUS (auto-calc) ==========
 
 let _autoCalcTimer = null;
 
-// Robust date parser — handles 'yyyy-MM-dd', 'Mon 06/01/26', '6/1/2026', Date objects
 function parseScheduleDate(val) {
   if (!val) return null;
   if (val instanceof Date) return val;
   const s = String(val).trim();
-  // Try ISO format first (what Code.gs sends)
   const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (iso) return new Date(parseInt(iso[1]), parseInt(iso[2]) - 1, parseInt(iso[3]));
-  // Try 'Mon 06/01/26' or '06/01/26' or '6/1/2026'
   const parts = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
   if (parts) {
     let yr = parseInt(parts[3]);
-    if (yr < 100) yr += 2000;  // '26' → 2026
+    if (yr < 100) yr += 2000;
     return new Date(yr, parseInt(parts[1]) - 1, parseInt(parts[2]));
   }
-  // Fallback: native parser
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
+}
+
+// V6.0: for a task row, compute the cumulative value the backend would use
+function getRowCumulativeForCalc(row, blockId, taskName) {
+  const cumulInput = row.querySelector('.task-cumulative');
+  const execInput = row.querySelector('.task-executed');
+  const typedCumul = parseFloat(cumulInput?.value) || 0;
+  const executed = parseFloat(execInput?.value) || 0;
+  if (typedCumul > 0) return typedCumul;
+  const prevKey = blockId + '||' + taskName;
+  const prev = latestCumulativeMap[prevKey] || 0;
+  return prev + executed;
 }
 
 function autoCalcBlockStatus() {
@@ -235,12 +218,8 @@ function autoCalcBlockStatus() {
     c.innerHTML = '<p class="hint" style="color:var(--danger)">Invalid report date.</p>';
     return;
   }
-
-  // Read all work progress rows from Section 2
   const taskRows = document.querySelectorAll('#taskTable tbody tr');
-  const blockData = {};  // blockId -> { plannedDays, totalDays, actualWeightedPct, taskCount }
-
-  // Initialize block data from MasterSchedule (currentTasks)
+  const blockData = {};
   currentBlocks.forEach(b => {
     const tasks = currentTasks[b.blockId] || [];
     let totalDays = 0, elapsedDays = 0;
@@ -252,7 +231,7 @@ function autoCalcBlockStatus() {
       if (start && !isNaN(start.getTime())) {
         if (reportDate >= start) {
           if (finish && !isNaN(finish.getTime()) && reportDate > finish) {
-            elapsedDays += dur;  // task should be complete
+            elapsedDays += dur;
           } else {
             const daysPassed = Math.floor((reportDate - start) / 86400000) + 1;
             elapsedDays += Math.min(daysPassed, dur);
@@ -263,43 +242,22 @@ function autoCalcBlockStatus() {
     blockData[b.blockId] = { totalDays, elapsedDays, actualSum: 0, weightSum: 0, taskCount: tasks.length };
   });
 
-  // Accumulate actual progress from work progress rows
-  console.log('[autoCalc] Reading', taskRows.length, 'task rows, reportDate:', reportDateStr);
-  console.log('[autoCalc] currentBlocks:', currentBlocks.map(b => b.blockId).join(', '));
-  console.log('[autoCalc] currentTasks keys:', Object.keys(currentTasks).join(', '));
-
   taskRows.forEach(row => {
     const blockId = row.querySelector('.task-block')?.value || row.dataset.block || '';
     const taskName = row.querySelector('.task-name')?.value || row.querySelector('.task-name-text')?.value || '';
-    const cumulativeInput = row.querySelector('.task-cumulative');
-    const executedInput = row.querySelector('.task-executed');
-    const cumulative = parseFloat(cumulativeInput?.value) || 0;
-    const executed = parseFloat(executedInput?.value) || 0;
-    // Use cumulative first; if empty, fall back to daily executed
-    const actualQty = cumulative > 0 ? cumulative : executed;
+    if (!blockId || !taskName) return;
 
-    if (!blockId || actualQty <= 0) {
-      if (blockId && (cumulative > 0 || executed > 0)) {
-        console.log('[autoCalc] SKIP (no blockId or qty=0) blockId=' + blockId + ' cumul=' + cumulative + ' exec=' + executed);
-      }
-      return;
-    }
+    const actualQty = getRowCumulativeForCalc(row, blockId, taskName);
+    if (actualQty <= 0) return;
 
-    // Find matching task in schedule to get overallPlannedQty and duration
     const tasks = currentTasks[blockId] || [];
     const match = tasks.find(t => t.name === taskName);
-    console.log('[autoCalc]', blockId, taskName, 'actualQty=' + actualQty + ' (cumul=' + cumulative + ', exec=' + executed + ')', 'match=' + !!match);
+    if (!match) return;
 
-    if (!match) {
-      console.warn('[autoCalc] NO MATCH for', blockId, taskName, '- available tasks:', tasks.map(t => t.name).join(', '));
-      return;
-    }
-
-    // Fallback: if overallPlannedQty is 0, compute from dailyPlannedQty * duration
     let overallPlanned = match.overallPlannedQty || 0;
+    if (overallPlanned <= 0 && (match.plannedQty > 0)) overallPlanned = match.plannedQty;
     if (overallPlanned <= 0 && (match.dailyPlannedQty > 0) && (match.duration > 0)) {
       overallPlanned = match.dailyPlannedQty * match.duration;
-      console.log('[autoCalc] Fallback: ' + taskName + ' overall=' + overallPlanned + ' (daily=' + match.dailyPlannedQty + ' x dur=' + match.duration + ')');
     }
 
     if (overallPlanned > 0 && blockData[blockId]) {
@@ -307,13 +265,9 @@ function autoCalcBlockStatus() {
       const taskPct = Math.min((actualQty / overallPlanned) * 100, 100);
       blockData[blockId].actualSum += taskPct * dur;
       blockData[blockId].weightSum += dur;
-      console.log('[autoCalc] OK', blockId, taskName, 'actualQty=' + actualQty, 'overall=' + overallPlanned, 'pct=' + taskPct.toFixed(1) + '%, dur=' + dur);
-    } else {
-      console.warn('[autoCalc] SKIP (overallPlanned=0) blockId=' + blockId + ' ' + taskName + ' overallPlanned=' + overallPlanned);
     }
   });
 
-  // Render block status table
   let html = '<table style="width:100%;font-size:0.88em;border-collapse:collapse">' +
     '<tr style="background:var(--primary);color:#fff"><th>Block</th><th>Planned %</th><th>Actual %</th><th>Target Achievement %</th><th>Status</th><th>Performance</th></tr>';
 
@@ -332,7 +286,8 @@ function autoCalcBlockStatus() {
     else { status = 'Not Active'; perf = 'Not Yet Due'; }
 
     const achColor = targetAch >= 95 ? 'var(--success)' : targetAch >= 70 ? 'var(--warn)' : 'var(--danger)';
-    const statusColor = status === 'Completed' ? 'var(--success)' : status === 'On Track' ? 'var(--success)' : status === 'Delayed' ? 'var(--danger)' : 'var(--text)';
+    const statusColor = (status === 'Completed' || status === 'On Track') ? 'var(--success)' :
+                        status === 'Delayed' ? 'var(--danger)' : 'var(--text)';
 
     html += '<tr style="border-bottom:1px solid var(--border)">' +
       '<td><strong>' + b.blockId + '</strong> - ' + (b.blockName || '') + '</td>' +
@@ -342,12 +297,11 @@ function autoCalcBlockStatus() {
       '<td style="color:' + statusColor + ';font-weight:600">' + status + '</td>' +
       '<td>' + perf + '</td></tr>';
   });
-
   html += '</table>';
   c.innerHTML = html;
 }
 
-// ========== WORK PROGRESS (Section 2 — RE enters data here) ==========
+// ========== WORK PROGRESS (Section 2) ==========
 
 function renderWorkProgress() {
   const c = document.getElementById('workProgressContainer');
@@ -362,6 +316,9 @@ function renderWorkProgress() {
     if (blockTasks.length > 0) {
       blockTasks.forEach(t => {
         counter++;
+        const prevKey = b.blockId + '||' + t.name;
+        const prev = latestCumulativeMap[prevKey] || 0;
+        const hint = prev > 0 ? ('last: ' + prev) : 'Cumul.';
         html += '<tr data-block="' + b.blockId + '">' +
           '<td>' + counter + '</td>' +
           '<td><select class="task-block" disabled><option value="' + b.blockId + '" selected>' + b.blockId + '</option></select></td>' +
@@ -370,7 +327,7 @@ function renderWorkProgress() {
           '<td><input type="number" class="task-planned" step="any" value="' + (t.dailyPlannedQty || '') + '" style="width:70px"></td>' +
           '<td><input type="number" class="task-executed" step="any" style="width:70px" data-block="' + b.blockId + '" data-overall="' + (t.overallPlannedQty || 0) + '"></td>' +
           '<td class="task-daily-pct" style="width:55px;text-align:center">-</td>' +
-          '<td><input type="number" class="task-cumulative" step="any" style="width:80px" placeholder="Cumul." data-block="' + b.blockId + '" data-overall="' + (t.overallPlannedQty || 0) + '"></td>' +
+          '<td><input type="number" class="task-cumulative" step="any" style="width:80px" placeholder="' + hint + '" data-block="' + b.blockId + '" data-overall="' + (t.overallPlannedQty || 0) + '" data-prev="' + prev + '"></td>' +
           '<td class="task-overall-pct" style="width:55px;text-align:center">-</td>' +
           '<td><input type="text" class="task-remark" style="width:90px"></td></tr>';
       });
@@ -384,37 +341,36 @@ function renderWorkProgress() {
         '<td><input type="number" class="task-planned" step="any" style="width:70px"></td>' +
         '<td><input type="number" class="task-executed" step="any" style="width:70px" data-block="' + b.blockId + '" data-overall="0"></td>' +
         '<td class="task-daily-pct" style="width:55px;text-align:center">-</td>' +
-        '<td><input type="number" class="task-cumulative" step="any" style="width:80px" placeholder="Cumul." data-block="' + b.blockId + '" data-overall="0"></td>' +
+        '<td><input type="number" class="task-cumulative" step="any" style="width:80px" placeholder="Cumul." data-block="' + b.blockId + '" data-overall="0" data-prev="0"></td>' +
         '<td class="task-overall-pct" style="width:55px;text-align:center">-</td>' +
         '<td><input type="text" class="task-remark" style="width:90px"></td></tr>';
     }
   });
   html += '</tbody></table>';
   c.innerHTML = html;
-
-  // Add live calculation listeners
   document.querySelectorAll('.task-executed, .task-cumulative').forEach(inp => {
     inp.addEventListener('input', onTaskInputChanged);
   });
 }
 
 function onTaskInputChanged() {
-  // Update Daily % and Overall % for the changed row
   const row = this.closest('tr');
   if (!row) return;
   const planned = parseFloat(row.querySelector('.task-planned')?.value) || 0;
   const executed = parseFloat(row.querySelector('.task-executed')?.value) || 0;
-  const cumulative = parseFloat(row.querySelector('.task-cumulative')?.value) || 0;
+  const typedCumul = parseFloat(row.querySelector('.task-cumulative')?.value) || 0;
   const overall = parseFloat(this.dataset.overall) || 0;
+  const prev = parseFloat(this.dataset.prev) || 0;
 
   const dailyCell = row.querySelector('.task-daily-pct');
   const overallCell = row.querySelector('.task-overall-pct');
-  if (planned > 0) dailyCell.textContent = ((executed / planned) * 100).toFixed(1) + '%';
+  if (planned > 0) dailyCell.textContent = Math.min((executed / planned) * 100, 100).toFixed(1) + '%';
   else dailyCell.textContent = '-';
-  if (overall > 0) overallCell.textContent = ((cumulative / overall) * 100).toFixed(1) + '%';
+
+  const effectiveCumul = typedCumul > 0 ? typedCumul : (prev + executed);
+  if (overall > 0) overallCell.textContent = Math.min((effectiveCumul / overall) * 100, 100).toFixed(1) + '%';
   else overallCell.textContent = '-';
 
-  // Debounced re-calculation of Block Status (Section 3)
   clearTimeout(_autoCalcTimer);
   _autoCalcTimer = setTimeout(() => autoCalcBlockStatus(), 300);
 }
@@ -432,17 +388,15 @@ function addGenericRow() {
     '<td><input type="number" class="task-planned" step="any" style="width:70px"></td>' +
     '<td><input type="number" class="task-executed" step="any" style="width:70px" data-block="" data-overall="0"></td>' +
     '<td class="task-daily-pct" style="width:55px;text-align:center">-</td>' +
-    '<td><input type="number" class="task-cumulative" step="any" style="width:80px" placeholder="Cumul." data-block="" data-overall="0"></td>' +
+    '<td><input type="number" class="task-cumulative" step="any" style="width:80px" placeholder="Cumul." data-block="" data-overall="0" data-prev="0"></td>' +
     '<td class="task-overall-pct" style="width:55px;text-align:center">-</td>' +
     '<td><input type="text" class="task-remark" style="width:90px"></td>';
-  // Attach listeners to new inputs
   row.querySelectorAll('.task-executed, .task-cumulative').forEach(inp => {
     inp.addEventListener('input', onTaskInputChanged);
   });
 }
 
 // ========== WORKFORCE ==========
-
 function renderWorkforce() {
   const tbody = document.querySelector('#workforceTable tbody');
   tbody.innerHTML = '';
@@ -457,7 +411,6 @@ function renderWorkforce() {
     inp.addEventListener('input', updateWorkforceTotals);
   });
 }
-
 function updateWorkforceTotals() {
   let p = 0, a = 0;
   document.querySelectorAll('.wf-planned').forEach(i => { p += parseInt(i.value) || 0; });
@@ -466,14 +419,18 @@ function updateWorkforceTotals() {
   document.getElementById('wfAvailTotal').textContent = a;
 }
 
-// ========== PERFORMANCE ==========
+// ========== PERFORMANCE (Section 13) ==========
 
 function renderPerformance() {
   const c = document.getElementById('performanceContainer');
-  if (currentBlocks.length === 0) return;
+  if (!c) return;
+  if (currentBlocks.length === 0) {
+    c.innerHTML = '<p class="hint">Performance rows load with block statuses.</p>';
+    return;
+  }
   let html = '<table id="perfTable"><thead><tr><th>Block</th><th>Daily Target Achievement</th><th>Status</th></tr></thead><tbody>';
   currentBlocks.forEach(b => {
-    html += '<tr><td>' + b.blockId + ' - ' + b.blockName + '</td>' +
+    html += '<tr><td>' + b.blockId + ' - ' + (b.blockName || '') + '</td>' +
       '<td><input type="text" class="perf-achievement" data-block="' + b.blockId + '" placeholder="e.g. 80%"></td>' +
       '<td><select class="perf-status" data-block="' + b.blockId + '">' +
       '<option>On Track</option><option>Delayed</option><option>Needs Schedule Update</option><option>Completed</option>' +
@@ -483,7 +440,7 @@ function renderPerformance() {
   c.innerHTML = html;
 }
 
-// ========== DYNAMIC ROW ADDER ==========
+// ========== DYNAMIC ROWS ==========
 
 function addDynamicRow(tableId) {
   const tbody = document.querySelector('#' + tableId + ' tbody');
@@ -538,16 +495,14 @@ function addDynamicRow(tableId) {
   }
 }
 
-// ========== ROW-LEVEL PHOTO PREVIEW (Sections 9, 10, 14) ==========
+// ========== ROW PHOTOS ==========
 
 function previewRowPhoto(inputEl) {
   const file = inputEl.files[0];
   if (!file) return;
-  // Remove any existing preview in this cell
   let cell = inputEl.parentElement;
   let oldPreview = cell.querySelector('.row-photo-preview');
   if (oldPreview) oldPreview.remove();
-  // Show thumbnail
   const reader = new FileReader();
   reader.onload = function(ev) {
     const img = document.createElement('img');
@@ -559,20 +514,47 @@ function previewRowPhoto(inputEl) {
   reader.readAsDataURL(file);
 }
 
-// Collect all row-level photos from a table as base64 array
-function collectRowPhotos(tableId) {
-  const photos = [];
-  const inputs = document.querySelectorAll('#' + tableId + ' .row-photo');
-  inputs.forEach(function(input) {
-    if (input.files && input.files[0]) {
-      // We'll store the file reference; conversion happens at submit time
-      photos.push({ file: input.files[0], section: input.dataset.section });
-    }
+// V6.0: read a File as base64 data URL
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
   });
-  return photos;
 }
 
-// ========== PHOTOS ==========
+// V6.0: upload all row-level photos for a table; return array of URLs aligned with rows
+async function uploadRowPhotosForTable(tableId) {
+  const rows = document.querySelectorAll('#' + tableId + ' tbody tr');
+  const urls = [];
+  for (let i = 0; i < rows.length; i++) {
+    const input = rows[i].querySelector('.row-photo');
+    if (!input || !input.files || !input.files[0]) { urls.push(''); continue; }
+    try {
+      const dataUrl = await fileToBase64(input.files[0]);
+      const section = input.dataset.section || tableId;
+      const res = await fetch(API_BASE, {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'uploadRowPhoto',
+          section: section,
+          rowIndex: i,
+          photoData: dataUrl,
+          fileName: input.files[0].name
+        })
+      });
+      const d = await res.json();
+      urls.push(d.success ? d.url : '');
+    } catch (e) {
+      console.error('Row photo upload failed:', e);
+      urls.push('');
+    }
+  }
+  return urls;
+}
+
+// ========== SECTION 16 PHOTOS ==========
 
 function onPhotosSelected(e) {
   const files = e.target.files;
@@ -580,7 +562,6 @@ function onPhotosSelected(e) {
   const metaContainer = document.getElementById('photoMetaContainer');
   preview.innerHTML = '';
   metaContainer.innerHTML = '';
-
   Array.from(files).forEach((file, idx) => {
     const reader = new FileReader();
     reader.onload = ev => {
@@ -590,7 +571,6 @@ function onPhotosSelected(e) {
       preview.appendChild(img);
     };
     reader.readAsDataURL(file);
-
     const metaDiv = document.createElement('div');
     metaDiv.className = 'photo-meta-item';
     metaDiv.innerHTML = '<img src="" alt="preview" data-photo-idx="' + idx + '">' +
@@ -599,7 +579,6 @@ function onPhotosSelected(e) {
       '<label>Caption <input type="text" class="photo-caption" placeholder="Describe this photo..."></label>' +
       '</div>';
     metaContainer.appendChild(metaDiv);
-
     const thumbReader = new FileReader();
     thumbReader.onload = ev => {
       metaDiv.querySelector('img[data-photo-idx="' + idx + '"]').src = ev.target.result;
@@ -611,23 +590,20 @@ function onPhotosSelected(e) {
 // ========== COLLECT DATA ==========
 
 function collectBlockStatuses() {
-  // Read from auto-calculated Section 3 table
   const rows = document.querySelectorAll('#blockStatusContainer table tr');
   const statuses = [];
   rows.forEach((row, i) => {
-    if (i === 0) return; // skip header
+    if (i === 0) return;
     const cells = row.querySelectorAll('td');
     if (cells.length >= 6) {
       const blockLabel = cells[0].textContent.trim();
       const blockId = blockLabel.split(' - ')[0].trim();
-      const targetAch = cells[3].textContent.trim();
-      const perfStatus = cells[5].textContent.trim();
       if (blockId) {
         statuses.push({
-          blockId,
+          blockId: blockId,
           status: cells[4].textContent.trim(),
-          targetAchievement: targetAch,
-          perfStatus
+          targetAchievement: cells[3].textContent.trim(),
+          perfStatus: cells[5].textContent.trim()
         });
       }
     }
@@ -647,11 +623,10 @@ function collectTasks() {
     const cumul = row.querySelector('.task-cumulative');
     const execVal = exec ? (parseFloat(exec.value) || 0) : 0;
     const cumulVal = cumul ? (parseFloat(cumul.value) || 0) : 0;
-    // Collect task if it has a name AND (executed OR cumulative) value
     if (name && (execVal > 0 || cumulVal > 0)) {
       tasks.push({
         blockId: blockSel ? blockSel.value : '',
-        name,
+        name: name,
         unit: row.querySelector('.task-unit') ? row.querySelector('.task-unit').value : '',
         plannedQty: parseFloat(row.querySelector('.task-planned')?.value) || 0,
         executedQty: execVal,
@@ -670,7 +645,7 @@ function collectTableData(tableId, fields) {
     const cells = row.querySelectorAll('td');
     const obj = {};
     fields.forEach((f, i) => {
-      const inp = cells[i]?.querySelector('input, select, textarea');
+      const inp = cells[i]?.querySelector('input:not(.row-photo), select, textarea');
       obj[f] = inp ? inp.value : '';
     });
     if (Object.values(obj).some(v => v !== '' && v !== '0')) data.push(obj);
@@ -705,14 +680,11 @@ function collectPhotosWithMeta() {
   })));
 }
 
-// ========== DRAFT SAVE / LOAD ==========
+// ========== DRAFT ==========
 
 function saveDraft() {
   const site = document.getElementById('siteSelect').value;
-  if (!site) return;
-  // Don't save if in edit mode
-  if (editingReportId) return;
-
+  if (!site || editingReportId) return;
   const draftData = {
     site: site,
     reportDate: document.getElementById('reportDate').value,
@@ -737,12 +709,8 @@ function saveDraft() {
     holdPointRequests: document.getElementById('holdPointRequests').value,
     timestamp: new Date().toISOString()
   };
-
-  try {
-    localStorage.setItem('hdcre_draft_' + site, JSON.stringify(draftData));
-  } catch (e) { console.warn('Draft save failed:', e); }
+  try { localStorage.setItem('hdcre_draft_' + site, JSON.stringify(draftData)); } catch (e) {}
 }
-
 function checkForDraft(site) {
   if (editingReportId) return;
   try {
@@ -755,25 +723,19 @@ function checkForDraft(site) {
       '<a href="#" id="restoreDraftBtn" style="color:#00695C;font-weight:700">Restore Draft</a> | ' +
       '<a href="#" id="dismissDraftBtn" style="color:#C44536">Dismiss</a>';
     banner.classList.remove('hidden');
-
     document.getElementById('restoreDraftBtn').addEventListener('click', (e) => {
-      e.preventDefault();
-      restoreDraft(site);
+      e.preventDefault(); restoreDraft(site);
     });
     document.getElementById('dismissDraftBtn').addEventListener('click', (e) => {
-      e.preventDefault();
-      clearDraft(site);
-      banner.classList.add('hidden');
+      e.preventDefault(); clearDraft(site); banner.classList.add('hidden');
     });
   } catch (e) {}
 }
-
 function restoreDraft(site) {
   try {
     const raw = localStorage.getItem('hdcre_draft_' + site);
     if (!raw) return;
     const d = JSON.parse(raw);
-
     document.getElementById('siteSelect').value = d.site || '';
     document.getElementById('reportDate').value = d.reportDate || '';
     document.getElementById('weatherAM').value = d.weatherAM || '';
@@ -783,27 +745,23 @@ function restoreDraft(site) {
     document.getElementById('recommendations').value = d.recommendations || '';
     document.getElementById('holdPointRequests').value = d.holdPointRequests || '';
 
-    // Restore block statuses
-    if (d.blockStatuses && currentBlocks.length > 0) {
-      document.querySelectorAll('.bs-status').forEach(sel => {
-        const match = d.blockStatuses.find(b => b.blockId === sel.dataset.block);
-        if (match) sel.value = match.status;
-      });
-    }
-
-    // Restore tasks - clear and re-add
     if (d.tasks && d.tasks.length > 0) {
       const tbody = document.querySelector('#taskTable tbody');
       if (tbody) {
         tbody.innerHTML = '';
         d.tasks.forEach((t, idx) => {
           const row = tbody.insertRow();
+          const prevKey = t.blockId + '||' + t.name;
+          const prev = latestCumulativeMap[prevKey] || 0;
           row.innerHTML = '<td>' + (idx + 1) + '</td>' +
             '<td><select class="task-block">' + blockOptionsHTML + '</select></td>' +
             '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
             '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" style="width:60px"></td>' +
             '<td><input type="number" class="task-planned" step="any" value="' + (t.plannedQty || 0) + '" style="width:70px"></td>' +
             '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:70px"></td>' +
+            '<td class="task-daily-pct">-</td>' +
+            '<td><input type="number" class="task-cumulative" step="any" value="' + (t.cumulativeQty || '') + '" style="width:80px" data-prev="' + prev + '"></td>' +
+            '<td class="task-overall-pct">-</td>' +
             '<td><input type="text" class="task-remark" value="' + (t.remark || '') + '" style="width:100px"></td>';
           if (t.blockId) {
             const sel = row.querySelector('.task-block');
@@ -812,8 +770,6 @@ function restoreDraft(site) {
         });
       }
     }
-
-    // Restore simple tables
     restoreTableData('workforceTable', d.workforce, ['laborType', 'planned', 'available', 'comments']);
     restoreTableData('equipmentTable', d.equipment, ['type', 'qty', 'condition', 'comments']);
     restoreTableData('matDeliveredTable', d.materialsDelivered, ['desc', 'unit', 'qty', 'allocatedBlock']);
@@ -824,8 +780,6 @@ function restoreDraft(site) {
     restoreTableData('safetyTable', d.safetyIssues, ['issue', 'block', 'actionTaken']);
     restoreTableData('stakeholderTable', d.stakeholderContribution, ['stakeholder', 'contribution']);
     restoreTableData('siteOrdersTable', d.siteOrders, ['orderNo', 'issuedTo', 'instruction', 'deadline']);
-
-    // Restore performance
     if (d.performance) {
       document.querySelectorAll('.perf-achievement').forEach(inp => {
         const match = d.performance.find(p => p.block === inp.dataset.block);
@@ -836,16 +790,12 @@ function restoreDraft(site) {
         if (match) sel.value = match.status || 'On Track';
       });
     }
-
     updateWorkforceTotals();
     document.getElementById('draftBanner').classList.add('hidden');
     document.getElementById('status').className = '';
     document.getElementById('status').textContent = 'Draft restored.';
-  } catch (e) {
-    console.error('Draft restore failed:', e);
-  }
+  } catch (e) { console.error('Draft restore failed:', e); }
 }
-
 function restoreTableData(tableId, data, fields) {
   if (!data || data.length === 0) return;
   const tbody = document.querySelector('#' + tableId + ' tbody');
@@ -872,7 +822,6 @@ function restoreTableData(tableId, data, fields) {
     });
   });
 }
-
 function clearDraft(site) {
   if (!site) site = document.getElementById('siteSelect').value;
   if (site) localStorage.removeItem('hdcre_draft_' + site);
@@ -890,12 +839,10 @@ async function loadMyReports() {
     const myReports = allReports.filter(r =>
       (r.reName || '').toLowerCase() === userName.toLowerCase()
     );
-
     if (myReports.length === 0) {
       container.innerHTML = '<p class="hint">No reports found for your account.</p>';
       return;
     }
-
     let html = '<table class="reports-list-table"><thead><tr>' +
       '<th>Report ID</th><th>Site</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
     myReports.forEach(r => {
@@ -911,7 +858,6 @@ async function loadMyReports() {
     });
     html += '</tbody></table>';
     container.innerHTML = html;
-
     container.querySelectorAll('.view-report-btn').forEach(btn => {
       btn.addEventListener('click', () => viewMyReport(btn.dataset.id));
     });
@@ -928,7 +874,6 @@ async function viewMyReport(reportId) {
     const res = await fetch(API_BASE + '?endpoint=reportDetail&reportId=' + reportId);
     const data = await res.json();
     if (!data.success) { alert('Could not load report.'); return; }
-
     const rp = data.report;
     let h = '<h3 style="color:var(--primary);margin-top:0">' + rp.site + ' - ' + rp.date + '</h3>';
     h += '<div class="meta-grid"><span class="label">RE:</span><span>' + rp.reName + '</span>';
@@ -936,6 +881,7 @@ async function viewMyReport(reportId) {
     h += '<span class="label">Efficiency:</span><span>' + (rp.efficiency || 'N/A') + '</span>';
     h += '<span class="label">Status:</span><span class="badge ' + (rp.status || '') + '">' + (rp.status || '') + '</span></div>';
     h += '<p><strong>Activity Summary:</strong> ' + (rp.activitySummary || '-') + '</p>';
+    if (rp.directorComments) h += '<p><strong>Director Comments:</strong> ' + rp.directorComments + '</p>';
 
     function renderSection(title, items, cols) {
       if (!items || items.length === 0) return '';
@@ -949,7 +895,6 @@ async function viewMyReport(reportId) {
       });
       return s + '</table></div>';
     }
-
     h += renderSection('Block Status', rp.blockStatuses, ['Block Name', 'Block Status', 'Target Achievement', 'Performance Status']);
     h += renderSection('Work Progress', rp.tasks, ['Block', 'Task Name', 'Unit', 'Planned QTY', 'Executed QTY', 'Daily Completion %', 'Cumulative Executed QTY', 'Overall Completion %']);
     h += renderSection('Workforce', rp.workforce, ['Labor Type', 'Planned', 'Available', 'Comments']);
@@ -963,11 +908,9 @@ async function viewMyReport(reportId) {
     h += renderSection('Stakeholder Contribution', rp.stakeholderContribution, ['Stakeholder', 'Contribution']);
     h += renderSection('Performance', rp.performance, ['Block', 'Daily Target Achievement', 'Status']);
     h += renderSection('Site Orders', rp.siteOrders, ['Order No', 'Issued To', 'Instruction', 'Deadline']);
-
     if (rp.holdPointRequests) {
       h += '<div class="detail-section"><h4>Hold-Point Requests</h4><p>' + rp.holdPointRequests + '</p></div>';
     }
-
     if (rp.photos && rp.photos.length > 0) {
       h += '<div class="detail-section"><h4>Photos</h4><div class="photo-grid">';
       rp.photos.forEach(p => {
@@ -975,40 +918,27 @@ async function viewMyReport(reportId) {
       });
       h += '</div></div>';
     }
-
     document.getElementById('reportViewContent').innerHTML = h;
     document.getElementById('reportViewModal').classList.remove('hidden');
-  } catch (e) {
-    alert('Error loading report.');
-  }
+  } catch (e) { alert('Error loading report.'); }
 }
-
-function closeReportView() {
-  document.getElementById('reportViewModal').classList.add('hidden');
-}
+function closeReportView() { document.getElementById('reportViewModal').classList.add('hidden'); }
 
 async function editMyReport(reportId) {
   const status = document.getElementById('status');
   status.className = '';
   status.textContent = 'Loading report for editing...';
-
   try {
     const res = await fetch(API_BASE + '?endpoint=reportForEdit&reportId=' + reportId);
     const data = await res.json();
-
     if (!data.success) {
       status.className = 'error';
       status.textContent = 'Error: ' + (data.message || 'Cannot load report.');
       return;
     }
-
     const report = data.report;
     editingReportId = reportId;
-
-    // Switch to New Report tab
     switchTab('new');
-
-    // Populate basic fields
     document.getElementById('siteSelect').value = report.site || '';
     document.getElementById('reportDate').value = report.reportDate || '';
     document.getElementById('weatherAM').value = report.weatherAM || '';
@@ -1017,33 +947,25 @@ async function editMyReport(reportId) {
     document.getElementById('resourceEfficiency').value = report.resourceEfficiency || '';
     document.getElementById('recommendations').value = report.recommendations || '';
     document.getElementById('holdPointRequests').value = report.holdPointRequests || '';
-
-    // Trigger site change to load blocks/tasks
     await onSiteChange();
 
-    // Populate block statuses
-    if (report.blockStatuses) {
-      document.querySelectorAll('.bs-status').forEach(sel => {
-        const match = report.blockStatuses.find(b => b.blockId === sel.dataset.block);
-        if (match) {
-          sel.value = match.status || 'Not Active';
-        }
-      });
-    }
-
-    // Populate tasks
     if (report.tasks && report.tasks.length > 0) {
       const tbody = document.querySelector('#taskTable tbody');
       if (tbody) {
         tbody.innerHTML = '';
         report.tasks.forEach((t, idx) => {
           const row = tbody.insertRow();
+          const prevKey = t.blockId + '||' + t.name;
+          const prev = latestCumulativeMap[prevKey] || 0;
           row.innerHTML = '<td>' + (idx + 1) + '</td>' +
             '<td><select class="task-block">' + blockOptionsHTML + '</select></td>' +
             '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
             '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" style="width:60px"></td>' +
             '<td><input type="number" class="task-planned" step="any" value="' + (t.plannedQty || 0) + '" style="width:70px"></td>' +
             '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:70px"></td>' +
+            '<td class="task-daily-pct">-</td>' +
+            '<td><input type="number" class="task-cumulative" step="any" value="' + (t.cumulativeQty || '') + '" style="width:80px" data-prev="' + prev + '"></td>' +
+            '<td class="task-overall-pct">-</td>' +
             '<td><input type="text" class="task-remark" value="' + (t.remark || '') + '" style="width:100px"></td>';
           if (t.blockId) {
             const bsel = row.querySelector('.task-block');
@@ -1052,8 +974,6 @@ async function editMyReport(reportId) {
         });
       }
     }
-
-    // Populate simple tables
     restoreTableData('workforceTable', report.workforce, ['laborType', 'planned', 'available', 'comments']);
     restoreTableData('equipmentTable', report.equipment, ['type', 'qty', 'condition', 'comments']);
     restoreTableData('matDeliveredTable', report.materialsDelivered, ['desc', 'unit', 'qty', 'allocatedBlock']);
@@ -1065,7 +985,6 @@ async function editMyReport(reportId) {
     restoreTableData('stakeholderTable', report.stakeholderContribution, ['stakeholder', 'contribution']);
     restoreTableData('siteOrdersTable', report.siteOrders, ['orderNo', 'issuedTo', 'instruction', 'deadline']);
 
-    // Populate performance
     if (report.performance) {
       document.querySelectorAll('.perf-achievement').forEach(inp => {
         const match = report.performance.find(p => p.block === inp.dataset.block);
@@ -1076,10 +995,8 @@ async function editMyReport(reportId) {
         if (match) sel.value = match.status || 'On Track';
       });
     }
-
     updateWorkforceTotals();
 
-    // Show edit mode UI
     document.getElementById('submitBtn').textContent = 'Update Report';
     document.getElementById('cancelEditBtn').classList.remove('hidden');
     document.getElementById('editModeBanner').classList.remove('hidden');
@@ -1087,11 +1004,9 @@ async function editMyReport(reportId) {
     document.getElementById('photoSection').style.opacity = '0.5';
     document.getElementById('photoSection').style.pointerEvents = 'none';
     document.getElementById('photoSectionNote').classList.remove('hidden');
-
     status.className = 'success';
     status.textContent = 'Report loaded for editing.';
     window.scrollTo({ top: 0, behavior: 'smooth' });
-
   } catch (e) {
     status.className = 'error';
     status.textContent = 'Error loading report: ' + e.message;
@@ -1117,13 +1032,10 @@ function cancelEdit() {
 
 async function handleSubmit(e) {
   e.preventDefault();
-
-  // Photo check only for new reports
   if (!editingReportId) {
     const photos = document.getElementById('photos').files;
     if (photos.length < 3) { alert('Please upload at least 3 photos.'); return; }
   }
-
   const status = document.getElementById('status');
   status.className = '';
   status.textContent = editingReportId ? 'Updating...' : 'Submitting...';
@@ -1154,21 +1066,26 @@ async function handleSubmit(e) {
   };
 
   try {
-    let action, body;
+    let body;
     if (editingReportId) {
-      action = 'updateReport';
       report.reportId = editingReportId;
-      body = { action: action, report: report };
+      body = { action: 'updateReport', report: report };
     } else {
-      action = 'submitReport';
+      status.textContent = 'Uploading row photos...';
+      const testUrls = await uploadRowPhotosForTable('testsTable');
+      const corrUrls = await uploadRowPhotosForTable('correspondencesTable');
+      const orderUrls = await uploadRowPhotosForTable('siteOrdersTable');
+      report.tests.forEach((t, i) => { t.photoUrl = testUrls[i] || ''; });
+      report.correspondences.forEach((c, i) => { c.photoUrl = corrUrls[i] || ''; });
+      report.siteOrders.forEach((o, i) => { o.photoUrl = orderUrls[i] || ''; });
+
+      status.textContent = 'Encoding Section 16 photos...';
       report.photos = await collectPhotosWithMeta();
-      body = { action: action, report: report };
+      body = { action: 'submitReport', report: report };
     }
 
-    const res = await fetch(API_BASE, {
-      method: 'POST',
-      body: JSON.stringify(body)
-    });
+    status.textContent = editingReportId ? 'Updating...' : 'Submitting...';
+    const res = await fetch(API_BASE, { method: 'POST', body: JSON.stringify(body) });
     const result = await res.json();
 
     if (result.success) {
@@ -1193,7 +1110,8 @@ async function handleSubmit(e) {
       status.textContent = 'Error: ' + (result.message || 'Unknown');
     }
   } catch (err) {
+    console.error(err);
     status.className = 'error';
-    status.textContent = 'Submission failed. Check connection.';
+    status.textContent = 'Submission failed: ' + err.message;
   }
 }
