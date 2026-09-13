@@ -1,4 +1,4 @@
-/* Version 6.0 */
+/* Version 6.1 */
 const API_BASE = 'https://script.google.com/macros/s/AKfycbzxLQS4aF6XwPzQcy46BGbNQpB_SRHSfS8chos4de_90zTwjZbK2EqELBwmbQS5AReZ/exec';
 let currentBlocks = [];
 let currentTasks = {};
@@ -156,14 +156,13 @@ async function onSiteChange() {
     const tRes = await fetch(API_BASE + '?endpoint=tasks&site=' + encodeURIComponent(site));
     currentTasks = await tRes.json();
 
-    // V6.0: fetch latest cumulative per block||task
     try {
       const cRes = await fetch(API_BASE + '?endpoint=latestCumulative&site=' + encodeURIComponent(site));
       latestCumulativeMap = await cRes.json();
     } catch (e) { latestCumulativeMap = {}; }
 
     renderWorkProgress();
-    renderPerformance();        // V6.0: was missing
+    renderPerformance();
     autoCalcBlockStatus();
 
     const lRes = await fetch(API_BASE + '?endpoint=laborTypes&site=' + encodeURIComponent(site));
@@ -174,7 +173,7 @@ async function onSiteChange() {
   } catch (e) { console.error(e); }
 }
 
-// ========== BLOCK STATUS (auto-calc) ==========
+// ========== BLOCK STATUS ==========
 
 let _autoCalcTimer = null;
 
@@ -194,13 +193,10 @@ function parseScheduleDate(val) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-// V6.0: for a task row, compute the cumulative value the backend would use
+// V6.1: cumulative is now prev + today's executed (RE no longer types it)
 function getRowCumulativeForCalc(row, blockId, taskName) {
-  const cumulInput = row.querySelector('.task-cumulative');
   const execInput = row.querySelector('.task-executed');
-  const typedCumul = parseFloat(cumulInput?.value) || 0;
   const executed = parseFloat(execInput?.value) || 0;
-  if (typedCumul > 0) return typedCumul;
   const prevKey = blockId + '||' + taskName;
   const prev = latestCumulativeMap[prevKey] || 0;
   return prev + executed;
@@ -301,7 +297,7 @@ function autoCalcBlockStatus() {
   c.innerHTML = html;
 }
 
-// ========== WORK PROGRESS (Section 2) ==========
+// ========== WORK PROGRESS (Section 2) — V6.1 ==========
 
 function renderWorkProgress() {
   const c = document.getElementById('workProgressContainer');
@@ -309,46 +305,51 @@ function renderWorkProgress() {
     c.innerHTML = '<p class="hint">No blocks configured.</p>';
     return;
   }
-  let html = '<table id="taskTable"><thead><tr><th>#</th><th>Block</th><th>Task</th><th>Unit</th><th>Daily Planned</th><th>Daily Executed</th><th>Daily %</th><th>Cumulative</th><th>Overall %</th><th>Remarks</th></tr></thead><tbody>';
-  let counter = 0;
+  // V6.1: removed '#' and 'Cumulative' columns
+  let html = '<table id="taskTable"><thead><tr>' +
+    '<th style="min-width:110px">Block</th>' +
+    '<th>Task</th>' +
+    '<th>Unit</th>' +
+    '<th>Daily Planned</th>' +
+    '<th>Daily Executed</th>' +
+    '<th>Daily %</th>' +
+    '<th>Overall %</th>' +
+    '<th>Remarks</th>' +
+    '</tr></thead><tbody>';
+
   currentBlocks.forEach((b) => {
     const blockTasks = currentTasks[b.blockId] || [];
     if (blockTasks.length > 0) {
       blockTasks.forEach(t => {
-        counter++;
         const prevKey = b.blockId + '||' + t.name;
         const prev = latestCumulativeMap[prevKey] || 0;
-        const hint = prev > 0 ? ('last: ' + prev) : 'Cumul.';
         html += '<tr data-block="' + b.blockId + '">' +
-          '<td>' + counter + '</td>' +
-          '<td><select class="task-block" disabled><option value="' + b.blockId + '" selected>' + b.blockId + '</option></select></td>' +
+          '<td><select class="task-block" disabled style="min-width:90px"><option value="' + b.blockId + '" selected>' + b.blockId + '</option></select></td>' +
           '<td><select class="task-name"><option value="' + t.name + '" selected>' + t.name + '</option></select></td>' +
           '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" readonly style="width:50px"></td>' +
           '<td><input type="number" class="task-planned" step="any" value="' + (t.dailyPlannedQty || '') + '" style="width:70px"></td>' +
-          '<td><input type="number" class="task-executed" step="any" style="width:70px" data-block="' + b.blockId + '" data-overall="' + (t.overallPlannedQty || 0) + '"></td>' +
-          '<td class="task-daily-pct" style="width:55px;text-align:center">-</td>' +
-          '<td><input type="number" class="task-cumulative" step="any" style="width:80px" placeholder="' + hint + '" data-block="' + b.blockId + '" data-overall="' + (t.overallPlannedQty || 0) + '" data-prev="' + prev + '"></td>' +
-          '<td class="task-overall-pct" style="width:55px;text-align:center">-</td>' +
-          '<td><input type="text" class="task-remark" style="width:90px"></td></tr>';
+          '<td><input type="number" class="task-executed" step="any" style="width:70px" data-block="' + b.blockId + '" data-overall="' + (t.overallPlannedQty || 0) + '" data-prev="' + prev + '"></td>' +
+          '<td class="task-daily-pct" style="width:60px;text-align:center">-</td>' +
+          '<td class="task-overall-pct" style="width:60px;text-align:center">-</td>' +
+          '<td><input type="text" class="task-remark" style="width:90px"></td>' +
+          '</tr>';
       });
     } else {
-      counter++;
       html += '<tr data-block="' + b.blockId + '">' +
-        '<td>' + counter + '</td>' +
-        '<td><select class="task-block">' + blockOptionsHTML + '</select></td>' +
+        '<td><select class="task-block" style="min-width:90px">' + blockOptionsHTML + '</select></td>' +
         '<td><input type="text" class="task-name-text" placeholder="Task description"></td>' +
         '<td><input type="text" class="task-unit" placeholder="m3" style="width:50px"></td>' +
         '<td><input type="number" class="task-planned" step="any" style="width:70px"></td>' +
-        '<td><input type="number" class="task-executed" step="any" style="width:70px" data-block="' + b.blockId + '" data-overall="0"></td>' +
-        '<td class="task-daily-pct" style="width:55px;text-align:center">-</td>' +
-        '<td><input type="number" class="task-cumulative" step="any" style="width:80px" placeholder="Cumul." data-block="' + b.blockId + '" data-overall="0" data-prev="0"></td>' +
-        '<td class="task-overall-pct" style="width:55px;text-align:center">-</td>' +
-        '<td><input type="text" class="task-remark" style="width:90px"></td></tr>';
+        '<td><input type="number" class="task-executed" step="any" style="width:70px" data-block="' + b.blockId + '" data-overall="0" data-prev="0"></td>' +
+        '<td class="task-daily-pct" style="width:60px;text-align:center">-</td>' +
+        '<td class="task-overall-pct" style="width:60px;text-align:center">-</td>' +
+        '<td><input type="text" class="task-remark" style="width:90px"></td>' +
+        '</tr>';
     }
   });
   html += '</tbody></table>';
   c.innerHTML = html;
-  document.querySelectorAll('.task-executed, .task-cumulative').forEach(inp => {
+  document.querySelectorAll('.task-executed').forEach(inp => {
     inp.addEventListener('input', onTaskInputChanged);
   });
 }
@@ -358,7 +359,6 @@ function onTaskInputChanged() {
   if (!row) return;
   const planned = parseFloat(row.querySelector('.task-planned')?.value) || 0;
   const executed = parseFloat(row.querySelector('.task-executed')?.value) || 0;
-  const typedCumul = parseFloat(row.querySelector('.task-cumulative')?.value) || 0;
   const overall = parseFloat(this.dataset.overall) || 0;
   const prev = parseFloat(this.dataset.prev) || 0;
 
@@ -367,7 +367,8 @@ function onTaskInputChanged() {
   if (planned > 0) dailyCell.textContent = Math.min((executed / planned) * 100, 100).toFixed(1) + '%';
   else dailyCell.textContent = '-';
 
-  const effectiveCumul = typedCumul > 0 ? typedCumul : (prev + executed);
+  // Overall % = (prev cumulative + today's executed) / overall planned
+  const effectiveCumul = prev + executed;
   if (overall > 0) overallCell.textContent = Math.min((effectiveCumul / overall) * 100, 100).toFixed(1) + '%';
   else overallCell.textContent = '-';
 
@@ -378,20 +379,19 @@ function onTaskInputChanged() {
 function addGenericRow() {
   const tbody = document.querySelector('#taskTable tbody');
   if (!tbody) return;
-  const count = tbody.rows.length + 1;
   const row = tbody.insertRow();
   row.dataset.block = '';
-  row.innerHTML = '<td>' + count + '</td>' +
-    '<td><select class="task-block">' + blockOptionsHTML + '</select></td>' +
+  // V6.1: no '#' or 'Cumulative' cells
+  row.innerHTML =
+    '<td><select class="task-block" style="min-width:90px">' + blockOptionsHTML + '</select></td>' +
     '<td><input type="text" class="task-name-text" placeholder="Task description"></td>' +
     '<td><input type="text" class="task-unit" placeholder="m3" style="width:50px"></td>' +
     '<td><input type="number" class="task-planned" step="any" style="width:70px"></td>' +
-    '<td><input type="number" class="task-executed" step="any" style="width:70px" data-block="" data-overall="0"></td>' +
-    '<td class="task-daily-pct" style="width:55px;text-align:center">-</td>' +
-    '<td><input type="number" class="task-cumulative" step="any" style="width:80px" placeholder="Cumul." data-block="" data-overall="0" data-prev="0"></td>' +
-    '<td class="task-overall-pct" style="width:55px;text-align:center">-</td>' +
+    '<td><input type="number" class="task-executed" step="any" style="width:70px" data-block="" data-overall="0" data-prev="0"></td>' +
+    '<td class="task-daily-pct" style="width:60px;text-align:center">-</td>' +
+    '<td class="task-overall-pct" style="width:60px;text-align:center">-</td>' +
     '<td><input type="text" class="task-remark" style="width:90px"></td>';
-  row.querySelectorAll('.task-executed, .task-cumulative').forEach(inp => {
+  row.querySelectorAll('.task-executed').forEach(inp => {
     inp.addEventListener('input', onTaskInputChanged);
   });
 }
@@ -419,8 +419,7 @@ function updateWorkforceTotals() {
   document.getElementById('wfAvailTotal').textContent = a;
 }
 
-// ========== PERFORMANCE (Section 13) ==========
-
+// ========== PERFORMANCE ==========
 function renderPerformance() {
   const c = document.getElementById('performanceContainer');
   if (!c) return;
@@ -441,7 +440,6 @@ function renderPerformance() {
 }
 
 // ========== DYNAMIC ROWS ==========
-
 function addDynamicRow(tableId) {
   const tbody = document.querySelector('#' + tableId + ' tbody');
   if (!tbody) return;
@@ -496,7 +494,6 @@ function addDynamicRow(tableId) {
 }
 
 // ========== ROW PHOTOS ==========
-
 function previewRowPhoto(inputEl) {
   const file = inputEl.files[0];
   if (!file) return;
@@ -513,8 +510,6 @@ function previewRowPhoto(inputEl) {
   };
   reader.readAsDataURL(file);
 }
-
-// V6.0: read a File as base64 data URL
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -523,8 +518,6 @@ function fileToBase64(file) {
     reader.readAsDataURL(file);
   });
 }
-
-// V6.0: upload all row-level photos for a table; return array of URLs aligned with rows
 async function uploadRowPhotosForTable(tableId) {
   const rows = document.querySelectorAll('#' + tableId + ' tbody tr');
   const urls = [];
@@ -547,7 +540,6 @@ async function uploadRowPhotosForTable(tableId) {
       const d = await res.json();
       urls.push(d.success ? d.url : '');
     } catch (e) {
-      console.error('Row photo upload failed:', e);
       urls.push('');
     }
   }
@@ -555,7 +547,6 @@ async function uploadRowPhotosForTable(tableId) {
 }
 
 // ========== SECTION 16 PHOTOS ==========
-
 function onPhotosSelected(e) {
   const files = e.target.files;
   const preview = document.getElementById('photoPreview');
@@ -611,6 +602,7 @@ function collectBlockStatuses() {
   return statuses;
 }
 
+// V6.1: no more cumulative — backend derives it from prev + executed
 function collectTasks() {
   const rows = document.querySelectorAll('#taskTable tbody tr');
   const tasks = [];
@@ -620,17 +612,15 @@ function collectTasks() {
     const taskInput = row.querySelector('.task-name-text');
     const name = taskSel ? taskSel.value : (taskInput ? taskInput.value : '');
     const exec = row.querySelector('.task-executed');
-    const cumul = row.querySelector('.task-cumulative');
     const execVal = exec ? (parseFloat(exec.value) || 0) : 0;
-    const cumulVal = cumul ? (parseFloat(cumul.value) || 0) : 0;
-    if (name && (execVal > 0 || cumulVal > 0)) {
+    if (name && execVal > 0) {
       tasks.push({
         blockId: blockSel ? blockSel.value : '',
         name: name,
         unit: row.querySelector('.task-unit') ? row.querySelector('.task-unit').value : '',
         plannedQty: parseFloat(row.querySelector('.task-planned')?.value) || 0,
         executedQty: execVal,
-        cumulativeQty: cumulVal,
+        cumulativeQty: 0,           // V6.1: not entered; backend computes
         remark: row.querySelector('.task-remark') ? row.querySelector('.task-remark').value : ''
       });
     }
@@ -681,7 +671,6 @@ function collectPhotosWithMeta() {
 }
 
 // ========== DRAFT ==========
-
 function saveDraft() {
   const site = document.getElementById('siteSelect').value;
   if (!site || editingReportId) return;
@@ -749,24 +738,27 @@ function restoreDraft(site) {
       const tbody = document.querySelector('#taskTable tbody');
       if (tbody) {
         tbody.innerHTML = '';
-        d.tasks.forEach((t, idx) => {
+        d.tasks.forEach((t) => {
           const row = tbody.insertRow();
           const prevKey = t.blockId + '||' + t.name;
           const prev = latestCumulativeMap[prevKey] || 0;
-          row.innerHTML = '<td>' + (idx + 1) + '</td>' +
-            '<td><select class="task-block">' + blockOptionsHTML + '</select></td>' +
+          // V6.1: no '#' or 'Cumulative' cells
+          row.innerHTML =
+            '<td><select class="task-block" style="min-width:90px">' + blockOptionsHTML + '</select></td>' +
             '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
             '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" style="width:60px"></td>' +
             '<td><input type="number" class="task-planned" step="any" value="' + (t.plannedQty || 0) + '" style="width:70px"></td>' +
-            '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:70px"></td>' +
+            '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:70px" data-prev="' + prev + '"></td>' +
             '<td class="task-daily-pct">-</td>' +
-            '<td><input type="number" class="task-cumulative" step="any" value="' + (t.cumulativeQty || '') + '" style="width:80px" data-prev="' + prev + '"></td>' +
             '<td class="task-overall-pct">-</td>' +
             '<td><input type="text" class="task-remark" value="' + (t.remark || '') + '" style="width:100px"></td>';
           if (t.blockId) {
             const sel = row.querySelector('.task-block');
             if (sel) sel.value = t.blockId;
           }
+        });
+        document.querySelectorAll('.task-executed').forEach(inp => {
+          inp.addEventListener('input', onTaskInputChanged);
         });
       }
     }
@@ -803,7 +795,7 @@ function restoreTableData(tableId, data, fields) {
   tbody.innerHTML = '';
   data.forEach(row => {
     const tr = tbody.insertRow();
-    fields.forEach((f, i) => {
+    fields.forEach((f) => {
       const td = tr.insertCell();
       if (f === 'block' || f === 'allocatedBlock') {
         td.innerHTML = '<select>' + blockOptionsHTML + '</select>';
@@ -828,7 +820,6 @@ function clearDraft(site) {
 }
 
 // ========== MY REPORTS ==========
-
 async function loadMyReports() {
   const container = document.getElementById('myReportsContent');
   container.innerHTML = 'Loading...';
@@ -953,24 +944,27 @@ async function editMyReport(reportId) {
       const tbody = document.querySelector('#taskTable tbody');
       if (tbody) {
         tbody.innerHTML = '';
-        report.tasks.forEach((t, idx) => {
+        report.tasks.forEach((t) => {
           const row = tbody.insertRow();
           const prevKey = t.blockId + '||' + t.name;
           const prev = latestCumulativeMap[prevKey] || 0;
-          row.innerHTML = '<td>' + (idx + 1) + '</td>' +
-            '<td><select class="task-block">' + blockOptionsHTML + '</select></td>' +
+          // V6.1: no '#' or 'Cumulative' cells
+          row.innerHTML =
+            '<td><select class="task-block" style="min-width:90px">' + blockOptionsHTML + '</select></td>' +
             '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
             '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" style="width:60px"></td>' +
             '<td><input type="number" class="task-planned" step="any" value="' + (t.plannedQty || 0) + '" style="width:70px"></td>' +
-            '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:70px"></td>' +
+            '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:70px" data-prev="' + prev + '"></td>' +
             '<td class="task-daily-pct">-</td>' +
-            '<td><input type="number" class="task-cumulative" step="any" value="' + (t.cumulativeQty || '') + '" style="width:80px" data-prev="' + prev + '"></td>' +
             '<td class="task-overall-pct">-</td>' +
             '<td><input type="text" class="task-remark" value="' + (t.remark || '') + '" style="width:100px"></td>';
           if (t.blockId) {
             const bsel = row.querySelector('.task-block');
             if (bsel) bsel.value = t.blockId;
           }
+        });
+        document.querySelectorAll('.task-executed').forEach(inp => {
+          inp.addEventListener('input', onTaskInputChanged);
         });
       }
     }
@@ -1029,7 +1023,6 @@ function cancelEdit() {
 }
 
 // ========== SUBMIT ==========
-
 async function handleSubmit(e) {
   e.preventDefault();
   if (!editingReportId) {
