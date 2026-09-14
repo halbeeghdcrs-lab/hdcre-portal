@@ -1,4 +1,4 @@
-/* Version 6.1 */
+/* Version 6.4 */
 const API_BASE = 'https://script.google.com/macros/s/AKfycbzepwgDPfxDGLgReRkHGIUJoszgM2TVsAffkCdMUyNOUMhLt12BrueFo9ZcHjCkvwB3/exec';
 let currentBlocks = [];
 let currentTasks = {};
@@ -173,7 +173,7 @@ async function onSiteChange() {
   } catch (e) { console.error(e); }
 }
 
-// ========== BLOCK STATUS ==========
+// ========== BLOCK STATUS (Section 3 — auto-calculated) ==========
 
 let _autoCalcTimer = null;
 
@@ -193,15 +193,7 @@ function parseScheduleDate(val) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-// V6.1: cumulative is now prev + today's executed (RE no longer types it)
-function getRowCumulativeForCalc(row, blockId, taskName) {
-  const execInput = row.querySelector('.task-executed');
-  const executed = parseFloat(execInput?.value) || 0;
-  const prevKey = blockId + '||' + taskName;
-  const prev = latestCumulativeMap[prevKey] || 0;
-  return prev + executed;
-}
-
+// V6.4 — Section 3 now uses TODAY's executed only (weighted by task duration)
 function autoCalcBlockStatus() {
   const c = document.getElementById('blockStatusContainer');
   const reportDateStr = document.getElementById('reportDate').value;
@@ -214,7 +206,10 @@ function autoCalcBlockStatus() {
     c.innerHTML = '<p class="hint" style="color:var(--danger)">Invalid report date.</p>';
     return;
   }
+
   const taskRows = document.querySelectorAll('#taskTable tbody tr');
+
+  // Step 1 — initialize per-block data from MasterSchedule (for Planned %)
   const blockData = {};
   currentBlocks.forEach(b => {
     const tasks = currentTasks[b.blockId] || [];
@@ -238,32 +233,37 @@ function autoCalcBlockStatus() {
     blockData[b.blockId] = { totalDays, elapsedDays, actualSum: 0, weightSum: 0, taskCount: tasks.length };
   });
 
+  // Step 2 — accumulate Actual % from Section 2 rows
+  //   Task Completion % = today's executed / overall planned × 100
+  //   Contribution      = Task Completion % × task duration
+  //   Actual %          = Σ contributions / Σ durations (of tasks with data)
   taskRows.forEach(row => {
     const blockId = row.querySelector('.task-block')?.value || row.dataset.block || '';
     const taskName = row.querySelector('.task-name')?.value || row.querySelector('.task-name-text')?.value || '';
     if (!blockId || !taskName) return;
 
-    const actualQty = getRowCumulativeForCalc(row, blockId, taskName);
-    if (actualQty <= 0) return;
+    const executedToday = parseFloat(row.querySelector('.task-executed')?.value) || 0;
+    if (executedToday <= 0) return;
 
     const tasks = currentTasks[blockId] || [];
     const match = tasks.find(t => t.name === taskName);
     if (!match) return;
 
+    // Resolve overall planned quantity (prefer explicit, fallback to Planned QTY, then Daily×Duration)
     let overallPlanned = match.overallPlannedQty || 0;
-    if (overallPlanned <= 0 && (match.plannedQty > 0)) overallPlanned = match.plannedQty;
-    if (overallPlanned <= 0 && (match.dailyPlannedQty > 0) && (match.duration > 0)) {
+    if (overallPlanned <= 0 && match.plannedQty > 0) overallPlanned = match.plannedQty;
+    if (overallPlanned <= 0 && match.dailyPlannedQty > 0 && match.duration > 0) {
       overallPlanned = match.dailyPlannedQty * match.duration;
     }
+    if (overallPlanned <= 0 || !blockData[blockId]) return;
 
-    if (overallPlanned > 0 && blockData[blockId]) {
-      const dur = parseInt(match.duration) || 1;
-      const taskPct = Math.min((actualQty / overallPlanned) * 100, 100);
-      blockData[blockId].actualSum += taskPct * dur;
-      blockData[blockId].weightSum += dur;
-    }
+    const dur = parseInt(match.duration) || 1;
+    const taskPct = Math.min((executedToday / overallPlanned) * 100, 100);
+    blockData[blockId].actualSum += taskPct * dur;
+    blockData[blockId].weightSum += dur;
   });
 
+  // Step 3 — render
   let html = '<table style="width:100%;font-size:0.88em;border-collapse:collapse">' +
     '<tr style="background:var(--primary);color:#fff"><th>Block</th><th>Planned %</th><th>Actual %</th><th>Target Achievement %</th><th>Status</th><th>Performance</th></tr>';
 
@@ -293,11 +293,12 @@ function autoCalcBlockStatus() {
       '<td style="color:' + statusColor + ';font-weight:600">' + status + '</td>' +
       '<td>' + perf + '</td></tr>';
   });
+
   html += '</table>';
   c.innerHTML = html;
 }
 
-// ========== WORK PROGRESS (Section 2) — V6.1 ==========
+// ========== WORK PROGRESS (Section 2 — V6.4: no # column, no Cumulative field) ==========
 
 function renderWorkProgress() {
   const c = document.getElementById('workProgressContainer');
@@ -305,7 +306,6 @@ function renderWorkProgress() {
     c.innerHTML = '<p class="hint">No blocks configured.</p>';
     return;
   }
-  // V6.1: removed '#' and 'Cumulative' columns
   let html = '<table id="taskTable"><thead><tr>' +
     '<th style="min-width:110px">Block</th>' +
     '<th>Task</th>' +
@@ -367,11 +367,12 @@ function onTaskInputChanged() {
   if (planned > 0) dailyCell.textContent = Math.min((executed / planned) * 100, 100).toFixed(1) + '%';
   else dailyCell.textContent = '-';
 
-  // Overall % = (prev cumulative + today's executed) / overall planned
+  // Overall % in Section 2 = (prev cumulative + today) / overall planned
   const effectiveCumul = prev + executed;
   if (overall > 0) overallCell.textContent = Math.min((effectiveCumul / overall) * 100, 100).toFixed(1) + '%';
   else overallCell.textContent = '-';
 
+  // Debounced re-calc of Section 3
   clearTimeout(_autoCalcTimer);
   _autoCalcTimer = setTimeout(() => autoCalcBlockStatus(), 300);
 }
@@ -381,7 +382,6 @@ function addGenericRow() {
   if (!tbody) return;
   const row = tbody.insertRow();
   row.dataset.block = '';
-  // V6.1: no '#' or 'Cumulative' cells
   row.innerHTML =
     '<td><select class="task-block" style="min-width:90px">' + blockOptionsHTML + '</select></td>' +
     '<td><input type="text" class="task-name-text" placeholder="Task description"></td>' +
@@ -419,7 +419,7 @@ function updateWorkforceTotals() {
   document.getElementById('wfAvailTotal').textContent = a;
 }
 
-// ========== PERFORMANCE ==========
+// ========== PERFORMANCE (Section 13) ==========
 function renderPerformance() {
   const c = document.getElementById('performanceContainer');
   if (!c) return;
@@ -602,7 +602,6 @@ function collectBlockStatuses() {
   return statuses;
 }
 
-// V6.1: no more cumulative — backend derives it from prev + executed
 function collectTasks() {
   const rows = document.querySelectorAll('#taskTable tbody tr');
   const tasks = [];
@@ -620,7 +619,7 @@ function collectTasks() {
         unit: row.querySelector('.task-unit') ? row.querySelector('.task-unit').value : '',
         plannedQty: parseFloat(row.querySelector('.task-planned')?.value) || 0,
         executedQty: execVal,
-        cumulativeQty: 0,           // V6.1: not entered; backend computes
+        cumulativeQty: 0,
         remark: row.querySelector('.task-remark') ? row.querySelector('.task-remark').value : ''
       });
     }
@@ -742,7 +741,6 @@ function restoreDraft(site) {
           const row = tbody.insertRow();
           const prevKey = t.blockId + '||' + t.name;
           const prev = latestCumulativeMap[prevKey] || 0;
-          // V6.1: no '#' or 'Cumulative' cells
           row.innerHTML =
             '<td><select class="task-block" style="min-width:90px">' + blockOptionsHTML + '</select></td>' +
             '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
@@ -948,7 +946,6 @@ async function editMyReport(reportId) {
           const row = tbody.insertRow();
           const prevKey = t.blockId + '||' + t.name;
           const prev = latestCumulativeMap[prevKey] || 0;
-          // V6.1: no '#' or 'Cumulative' cells
           row.innerHTML =
             '<td><select class="task-block" style="min-width:90px">' + blockOptionsHTML + '</select></td>' +
             '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
