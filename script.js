@@ -1,13 +1,15 @@
-/* Version 6.4 */
+/* Version 7.0 */
 const API_BASE = 'https://script.google.com/macros/s/AKfycbzepwgDPfxDGLgReRkHGIUJoszgM2TVsAffkCdMUyNOUMhLt12BrueFo9ZcHjCkvwB3/exec';
 let currentBlocks = [];
 let currentTasks = {};
 let currentLaborTypes = [];
-let latestCumulativeMap = {};   // "block||task" -> number
+let latestCumulativeMap = {};
 let blockOptionsHTML = '';
 let editingReportId = null;
 let draftTimer = null;
 let allReports = [];
+let currentSiteName = '';
+let siteHasMasterSchedule = true;
 
 // ========== INITIALIZATION ==========
 
@@ -138,6 +140,8 @@ async function loadSites() {
       const o = document.createElement('option');
       o.value = s.name;
       o.textContent = s.name;
+      // V7.0: remember schedule capability per site
+      o.dataset.hasMasterSchedule = s.hasMasterSchedule ? 'true' : 'false';
       sel.appendChild(o);
     });
   } catch (e) { console.error(e); }
@@ -146,20 +150,38 @@ async function loadSites() {
 async function onSiteChange() {
   const site = document.getElementById('siteSelect').value;
   if (!site) return;
+  currentSiteName = site;
+
+  // V7.0: detect site capability
+  const sel = document.getElementById('siteSelect');
+  const opt = sel.options[sel.selectedIndex];
+  siteHasMasterSchedule = opt && opt.dataset.hasMasterSchedule === 'true';
+
+  // V7.0: hide "Populate Block Status" for no-schedule sites
+  const popBtn = document.getElementById('populateBlockStatus');
+  if (popBtn) popBtn.style.display = siteHasMasterSchedule ? '' : 'none';
+
   try {
+    // Blocks are loaded regardless — they live in ProjectBlocks, independent of MasterSchedule
     const bRes = await fetch(API_BASE + '?endpoint=blocks&site=' + encodeURIComponent(site));
     currentBlocks = await bRes.json();
     blockOptionsHTML = currentBlocks.map(b =>
       '<option value="' + b.blockId + '">' + b.blockId + ' - ' + b.blockName + '</option>'
-    ).join('');
+    ).join('') || '<option value=""></option>';
 
-    const tRes = await fetch(API_BASE + '?endpoint=tasks&site=' + encodeURIComponent(site));
-    currentTasks = await tRes.json();
+    // Tasks only exist for with-schedule sites
+    if (siteHasMasterSchedule) {
+      const tRes = await fetch(API_BASE + '?endpoint=tasks&site=' + encodeURIComponent(site));
+      currentTasks = await tRes.json();
 
-    try {
-      const cRes = await fetch(API_BASE + '?endpoint=latestCumulative&site=' + encodeURIComponent(site));
-      latestCumulativeMap = await cRes.json();
-    } catch (e) { latestCumulativeMap = {}; }
+      try {
+        const cRes = await fetch(API_BASE + '?endpoint=latestCumulative&site=' + encodeURIComponent(site));
+        latestCumulativeMap = await cRes.json();
+      } catch (e) { latestCumulativeMap = {}; }
+    } else {
+      currentTasks = {};
+      latestCumulativeMap = {};
+    }
 
     renderWorkProgress();
     renderPerformance();
@@ -173,7 +195,7 @@ async function onSiteChange() {
   } catch (e) { console.error(e); }
 }
 
-// ========== BLOCK STATUS (Section 3 — auto-calculated) ==========
+// ========== BLOCK STATUS (Section 3 — auto-calc) ==========
 
 let _autoCalcTimer = null;
 
@@ -193,9 +215,15 @@ function parseScheduleDate(val) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-// V6.4 — Section 3 now uses TODAY's executed only (weighted by task duration)
 function autoCalcBlockStatus() {
   const c = document.getElementById('blockStatusContainer');
+
+  // V7.0: no MasterSchedule → section is not applicable
+  if (!siteHasMasterSchedule) {
+    c.innerHTML = '<p class="hint" style="color:#8D6E63;font-style:italic;padding:0.6rem;background:#faf8f5;border-radius:8px;border:1px dashed #D7CCC8">Block Status Overview is calculated from the Master Schedule. This site has no Master Schedule, so this section does not apply. Task-level progress is recorded in Section 2 above.</p>';
+    return;
+  }
+
   const reportDateStr = document.getElementById('reportDate').value;
   if (!reportDateStr || !currentBlocks.length) {
     c.innerHTML = '<p class="hint">Select a site and enter report date to calculate.</p>';
@@ -209,7 +237,6 @@ function autoCalcBlockStatus() {
 
   const taskRows = document.querySelectorAll('#taskTable tbody tr');
 
-  // Step 1 — initialize per-block data from MasterSchedule (for Planned %)
   const blockData = {};
   currentBlocks.forEach(b => {
     const tasks = currentTasks[b.blockId] || [];
@@ -233,10 +260,6 @@ function autoCalcBlockStatus() {
     blockData[b.blockId] = { totalDays, elapsedDays, actualSum: 0, weightSum: 0, taskCount: tasks.length };
   });
 
-  // Step 2 — accumulate Actual % from Section 2 rows
-  //   Task Completion % = today's executed / overall planned × 100
-  //   Contribution      = Task Completion % × task duration
-  //   Actual %          = Σ contributions / Σ durations (of tasks with data)
   taskRows.forEach(row => {
     const blockId = row.querySelector('.task-block')?.value || row.dataset.block || '';
     const taskName = row.querySelector('.task-name')?.value || row.querySelector('.task-name-text')?.value || '';
@@ -249,7 +272,6 @@ function autoCalcBlockStatus() {
     const match = tasks.find(t => t.name === taskName);
     if (!match) return;
 
-    // Resolve overall planned quantity (prefer explicit, fallback to Planned QTY, then Daily×Duration)
     let overallPlanned = match.overallPlannedQty || 0;
     if (overallPlanned <= 0 && match.plannedQty > 0) overallPlanned = match.plannedQty;
     if (overallPlanned <= 0 && match.dailyPlannedQty > 0 && match.duration > 0) {
@@ -263,7 +285,6 @@ function autoCalcBlockStatus() {
     blockData[blockId].weightSum += dur;
   });
 
-  // Step 3 — render
   let html = '<table style="width:100%;font-size:0.88em;border-collapse:collapse">' +
     '<tr style="background:var(--primary);color:#fff"><th>Block</th><th>Planned %</th><th>Actual %</th><th>Target Achievement %</th><th>Status</th><th>Performance</th></tr>';
 
@@ -298,12 +319,37 @@ function autoCalcBlockStatus() {
   c.innerHTML = html;
 }
 
-// ========== WORK PROGRESS (Section 2 — V6.4: no # column, no Cumulative field) ==========
+// ========== WORK PROGRESS (Section 2 — V7.0 dual mode) ==========
 
 function renderWorkProgress() {
   const c = document.getElementById('workProgressContainer');
+
+  if (!currentSiteName) {
+    c.innerHTML = '<p class="hint">Select a site first to load blocks and scheduled tasks.</p>';
+    return;
+  }
+
+  // ---- No-schedule mode: Task-ID / Task / Unit / Daily Executed / Remarks ----
+  if (!siteHasMasterSchedule) {
+    let html = '<p class="hint" style="color:#E65100;font-weight:600;margin-bottom:0.4rem">This site does not have a Master Schedule. Click <strong>+ Add Task Row</strong> to record today\'s tasks manually.</p>';
+    html += '<table id="taskTable"><thead><tr>' +
+      '<th style="min-width:70px">Task-ID</th>' +
+      '<th>Task</th>' +
+      '<th style="min-width:60px">Unit</th>' +
+      '<th style="min-width:90px">Daily Executed</th>' +
+      '<th style="min-width:120px">Remarks</th>' +
+      '</tr></thead><tbody></tbody></table>';
+    c.innerHTML = html;
+
+    // Auto-add one blank row for convenience
+    const tbody = c.querySelector('#taskTable tbody');
+    if (tbody && tbody.rows.length === 0) addNoScheduleRow();
+    return;
+  }
+
+  // ---- With-schedule mode (unchanged) ----
   if (currentBlocks.length === 0) {
-    c.innerHTML = '<p class="hint">No blocks configured.</p>';
+    c.innerHTML = '<p class="hint">No blocks configured for this site.</p>';
     return;
   }
   let html = '<table id="taskTable"><thead><tr>' +
@@ -354,6 +400,19 @@ function renderWorkProgress() {
   });
 }
 
+// V7.0: add a no-schedule task row (Task-ID / Task / Unit / Executed / Remarks)
+function addNoScheduleRow() {
+  const tbody = document.querySelector('#taskTable tbody');
+  if (!tbody) return;
+  const row = tbody.insertRow();
+  row.innerHTML =
+    '<td><input type="text" class="task-id" placeholder="e.g. 1" style="width:70px"></td>' +
+    '<td><input type="text" class="task-name-text" placeholder="Task description"></td>' +
+    '<td><input type="text" class="task-unit" placeholder="m3" style="width:60px"></td>' +
+    '<td><input type="number" class="task-executed" step="any" style="width:90px"></td>' +
+    '<td><input type="text" class="task-remark" style="width:120px"></td>';
+}
+
 function onTaskInputChanged() {
   const row = this.closest('tr');
   if (!row) return;
@@ -364,20 +423,26 @@ function onTaskInputChanged() {
 
   const dailyCell = row.querySelector('.task-daily-pct');
   const overallCell = row.querySelector('.task-overall-pct');
-  if (planned > 0) dailyCell.textContent = Math.min((executed / planned) * 100, 100).toFixed(1) + '%';
-  else dailyCell.textContent = '-';
+  if (dailyCell) {
+    if (planned > 0) dailyCell.textContent = Math.min((executed / planned) * 100, 100).toFixed(1) + '%';
+    else dailyCell.textContent = '-';
+  }
+  if (overallCell) {
+    const effectiveCumul = prev + executed;
+    if (overall > 0) overallCell.textContent = Math.min((effectiveCumul / overall) * 100, 100).toFixed(1) + '%';
+    else overallCell.textContent = '-';
+  }
 
-  // Overall % in Section 2 = (prev cumulative + today) / overall planned
-  const effectiveCumul = prev + executed;
-  if (overall > 0) overallCell.textContent = Math.min((effectiveCumul / overall) * 100, 100).toFixed(1) + '%';
-  else overallCell.textContent = '-';
-
-  // Debounced re-calc of Section 3
   clearTimeout(_autoCalcTimer);
   _autoCalcTimer = setTimeout(() => autoCalcBlockStatus(), 300);
 }
 
 function addGenericRow() {
+  // V7.0: branch based on site capability
+  if (!siteHasMasterSchedule) {
+    addNoScheduleRow();
+    return;
+  }
   const tbody = document.querySelector('#taskTable tbody');
   if (!tbody) return;
   const row = tbody.insertRow();
@@ -423,6 +488,13 @@ function updateWorkforceTotals() {
 function renderPerformance() {
   const c = document.getElementById('performanceContainer');
   if (!c) return;
+
+  // V7.0: no-schedule sites have no blocks for performance rows
+  if (!siteHasMasterSchedule) {
+    c.innerHTML = '<p class="hint" style="color:#8D6E63;font-style:italic">Per-block performance requires a Master Schedule. For this site, use the Overall Resource Efficiency Rating above.</p>';
+    return;
+  }
+
   if (currentBlocks.length === 0) {
     c.innerHTML = '<p class="hint">Performance rows load with block statuses.</p>';
     return;
@@ -455,15 +527,15 @@ function addDynamicRow(tableId) {
       row.innerHTML = '<td><input type="text" placeholder="Description"></td>' +
         '<td><input type="text" placeholder="m3" style="width:50px"></td>' +
         '<td><input type="number" step="any"></td>' +
-        '<td><select>' + blockOptionsHTML + '</select></td>';
+        '<td>' + (blockOptionsHTML ? '<select>' + blockOptionsHTML + '</select>' : '<input type="text" placeholder="Block / Location">') + '</td>';
       break;
     case 'issuesTable':
-      row.innerHTML = '<td><select>' + blockOptionsHTML + '</select></td>' +
+      row.innerHTML = '<td>' + (blockOptionsHTML ? '<select>' + blockOptionsHTML + '</select>' : '<input type="text" placeholder="Block">') + '</td>' +
         '<td><textarea rows="1" placeholder="Describe the issue..."></textarea></td>';
       break;
     case 'testsTable':
       row.innerHTML = '<td><input type="text" placeholder="Test name"></td>' +
-        '<td><select>' + blockOptionsHTML + '</select></td>' +
+        '<td>' + (blockOptionsHTML ? '<select>' + blockOptionsHTML + '</select>' : '<input type="text" placeholder="Block">') + '</td>' +
         '<td><input type="text" placeholder="Result"></td>' +
         '<td><input type="file" accept="image/*" class="row-photo" data-section="tests" onchange="previewRowPhoto(this)"></td>';
       break;
@@ -476,7 +548,7 @@ function addDynamicRow(tableId) {
       break;
     case 'safetyTable':
       row.innerHTML = '<td><input type="text" placeholder="Safety issue"></td>' +
-        '<td><select>' + blockOptionsHTML + '</select></td>' +
+        '<td>' + (blockOptionsHTML ? '<select>' + blockOptionsHTML + '</select>' : '<input type="text" placeholder="Block">') + '</td>' +
         '<td><input type="text" placeholder="Action taken"></td>';
       break;
     case 'stakeholderTable':
@@ -602,9 +674,33 @@ function collectBlockStatuses() {
   return statuses;
 }
 
+// V7.0: dual-mode task collector
 function collectTasks() {
   const rows = document.querySelectorAll('#taskTable tbody tr');
   const tasks = [];
+
+  if (!siteHasMasterSchedule) {
+    // No-schedule mode: Task-ID / Task / Unit / Executed / Remarks
+    rows.forEach(row => {
+      const taskId = (row.querySelector('.task-id')?.value || '').trim();
+      const taskName = (row.querySelector('.task-name-text')?.value || '').trim();
+      const execVal = parseFloat(row.querySelector('.task-executed')?.value) || 0;
+      if (taskName && execVal > 0) {
+        tasks.push({
+          blockId: taskId || '',           // Task-ID goes to the Block column in DailyWorkProgress
+          name: taskName,
+          unit: row.querySelector('.task-unit')?.value || '',
+          plannedQty: 0,
+          executedQty: execVal,
+          cumulativeQty: 0,
+          remark: row.querySelector('.task-remark')?.value || ''
+        });
+      }
+    });
+    return tasks;
+  }
+
+  // With-schedule mode (unchanged)
   rows.forEach(row => {
     const blockSel = row.querySelector('.task-block');
     const taskSel = row.querySelector('.task-name');
@@ -739,25 +835,37 @@ function restoreDraft(site) {
         tbody.innerHTML = '';
         d.tasks.forEach((t) => {
           const row = tbody.insertRow();
-          const prevKey = t.blockId + '||' + t.name;
-          const prev = latestCumulativeMap[prevKey] || 0;
-          row.innerHTML =
-            '<td><select class="task-block" style="min-width:90px">' + blockOptionsHTML + '</select></td>' +
-            '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
-            '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" style="width:60px"></td>' +
-            '<td><input type="number" class="task-planned" step="any" value="' + (t.plannedQty || 0) + '" style="width:70px"></td>' +
-            '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:70px" data-prev="' + prev + '"></td>' +
-            '<td class="task-daily-pct">-</td>' +
-            '<td class="task-overall-pct">-</td>' +
-            '<td><input type="text" class="task-remark" value="' + (t.remark || '') + '" style="width:100px"></td>';
-          if (t.blockId) {
-            const sel = row.querySelector('.task-block');
-            if (sel) sel.value = t.blockId;
+          if (!siteHasMasterSchedule) {
+            // V7.0 no-schedule template
+            row.innerHTML =
+              '<td><input type="text" class="task-id" value="' + (t.blockId || '') + '" style="width:70px"></td>' +
+              '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
+              '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" style="width:60px"></td>' +
+              '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:90px"></td>' +
+              '<td><input type="text" class="task-remark" value="' + (t.remark || '') + '" style="width:120px"></td>';
+          } else {
+            const prevKey = t.blockId + '||' + t.name;
+            const prev = latestCumulativeMap[prevKey] || 0;
+            row.innerHTML =
+              '<td><select class="task-block" style="min-width:90px">' + blockOptionsHTML + '</select></td>' +
+              '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
+              '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" style="width:60px"></td>' +
+              '<td><input type="number" class="task-planned" step="any" value="' + (t.plannedQty || 0) + '" style="width:70px"></td>' +
+              '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:70px" data-prev="' + prev + '"></td>' +
+              '<td class="task-daily-pct">-</td>' +
+              '<td class="task-overall-pct">-</td>' +
+              '<td><input type="text" class="task-remark" value="' + (t.remark || '') + '" style="width:100px"></td>';
+            if (t.blockId) {
+              const sel = row.querySelector('.task-block');
+              if (sel) sel.value = t.blockId;
+            }
           }
         });
-        document.querySelectorAll('.task-executed').forEach(inp => {
-          inp.addEventListener('input', onTaskInputChanged);
-        });
+        if (siteHasMasterSchedule) {
+          document.querySelectorAll('.task-executed').forEach(inp => {
+            inp.addEventListener('input', onTaskInputChanged);
+          });
+        }
       }
     }
     restoreTableData('workforceTable', d.workforce, ['laborType', 'planned', 'available', 'comments']);
@@ -796,8 +904,16 @@ function restoreTableData(tableId, data, fields) {
     fields.forEach((f) => {
       const td = tr.insertCell();
       if (f === 'block' || f === 'allocatedBlock') {
-        td.innerHTML = '<select>' + blockOptionsHTML + '</select>';
-        if (row[f]) td.querySelector('select').value = row[f];
+        if (blockOptionsHTML && blockOptionsHTML.indexOf('<option') !== -1 && currentBlocks.length > 0) {
+          td.innerHTML = '<select>' + blockOptionsHTML + '</select>';
+          if (row[f]) td.querySelector('select').value = row[f];
+        } else {
+          const inp = document.createElement('input');
+          inp.type = 'text';
+          inp.placeholder = 'Block';
+          inp.value = row[f] || '';
+          td.appendChild(inp);
+        }
       } else if (f === 'condition') {
         td.innerHTML = '<select><option>Good</option><option>Fair</option><option>Broken</option><option>Under Repair</option></select>';
         if (row[f]) td.querySelector('select').value = row[f];
@@ -929,6 +1045,14 @@ async function editMyReport(reportId) {
     editingReportId = reportId;
     switchTab('new');
     document.getElementById('siteSelect').value = report.site || '';
+    // V7.0: re-detect schedule capability for the site being edited
+    const sel = document.getElementById('siteSelect');
+    const opt = sel.options[sel.selectedIndex];
+    siteHasMasterSchedule = opt && opt.dataset.hasMasterSchedule === 'true';
+    currentSiteName = report.site || '';
+    const popBtn = document.getElementById('populateBlockStatus');
+    if (popBtn) popBtn.style.display = siteHasMasterSchedule ? '' : 'none';
+
     document.getElementById('reportDate').value = report.reportDate || '';
     document.getElementById('weatherAM').value = report.weatherAM || '';
     document.getElementById('weatherPM').value = report.weatherPM || '';
@@ -944,25 +1068,37 @@ async function editMyReport(reportId) {
         tbody.innerHTML = '';
         report.tasks.forEach((t) => {
           const row = tbody.insertRow();
-          const prevKey = t.blockId + '||' + t.name;
-          const prev = latestCumulativeMap[prevKey] || 0;
-          row.innerHTML =
-            '<td><select class="task-block" style="min-width:90px">' + blockOptionsHTML + '</select></td>' +
-            '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
-            '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" style="width:60px"></td>' +
-            '<td><input type="number" class="task-planned" step="any" value="' + (t.plannedQty || 0) + '" style="width:70px"></td>' +
-            '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:70px" data-prev="' + prev + '"></td>' +
-            '<td class="task-daily-pct">-</td>' +
-            '<td class="task-overall-pct">-</td>' +
-            '<td><input type="text" class="task-remark" value="' + (t.remark || '') + '" style="width:100px"></td>';
-          if (t.blockId) {
-            const bsel = row.querySelector('.task-block');
-            if (bsel) bsel.value = t.blockId;
+          if (!siteHasMasterSchedule) {
+            // V7.0 no-schedule template
+            row.innerHTML =
+              '<td><input type="text" class="task-id" value="' + (t.blockId || '') + '" style="width:70px"></td>' +
+              '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
+              '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" style="width:60px"></td>' +
+              '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:90px"></td>' +
+              '<td><input type="text" class="task-remark" value="' + (t.remark || '') + '" style="width:120px"></td>';
+          } else {
+            const prevKey = t.blockId + '||' + t.name;
+            const prev = latestCumulativeMap[prevKey] || 0;
+            row.innerHTML =
+              '<td><select class="task-block" style="min-width:90px">' + blockOptionsHTML + '</select></td>' +
+              '<td><input type="text" class="task-name-text" value="' + (t.name || '') + '"></td>' +
+              '<td><input type="text" class="task-unit" value="' + (t.unit || '') + '" style="width:60px"></td>' +
+              '<td><input type="number" class="task-planned" step="any" value="' + (t.plannedQty || 0) + '" style="width:70px"></td>' +
+              '<td><input type="number" class="task-executed" step="any" value="' + (t.executedQty || 0) + '" style="width:70px" data-prev="' + prev + '"></td>' +
+              '<td class="task-daily-pct">-</td>' +
+              '<td class="task-overall-pct">-</td>' +
+              '<td><input type="text" class="task-remark" value="' + (t.remark || '') + '" style="width:100px"></td>';
+            if (t.blockId) {
+              const bsel = row.querySelector('.task-block');
+              if (bsel) bsel.value = t.blockId;
+            }
           }
         });
-        document.querySelectorAll('.task-executed').forEach(inp => {
-          inp.addEventListener('input', onTaskInputChanged);
-        });
+        if (siteHasMasterSchedule) {
+          document.querySelectorAll('.task-executed').forEach(inp => {
+            inp.addEventListener('input', onTaskInputChanged);
+          });
+        }
       }
     }
     restoreTableData('workforceTable', report.workforce, ['laborType', 'planned', 'available', 'comments']);
